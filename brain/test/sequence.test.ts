@@ -67,3 +67,15 @@ test("generic candidates: a URL printed in a terminal becomes 'Open …', newest
     const c = genericCandidates({ now: 0, active: term, recent: [], history: [] });
     assert.ok(c.some((a) => a.op === "navigate" && a.value === "https://github.com/a/b/pull/new/fix" && a.label === "Open github.com/a/b/pull/new/fix"));
 });
+
+test("cloud tier: only long-text fields qualify, and it's off without TAB_CLOUD=1", async () => {
+    const { isLongTextField, CloudWriter } = await import("../src/runtime/cloud.ts");
+    const f = (role: El["role"], label: string): El => ({ id: label, role, label, rect: r, enabled: true });
+    assert.equal(isLongTextField(f("textarea", "Leave a comment")), true);
+    assert.equal(isLongTextField(f("textfield", "Description")), true);
+    assert.equal(isLongTextField(f("textfield", "Email")), false);
+    const prev = process.env.TAB_CLOUD;
+    delete process.env.TAB_CLOUD;
+    assert.equal(new CloudWriter().enabled, false);
+    if (prev !== undefined) process.env.TAB_CLOUD = prev;
+});

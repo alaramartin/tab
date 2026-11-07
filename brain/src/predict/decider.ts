@@ -15,6 +15,7 @@ import { CHAT_PORT, LlamaServer, MODELS } from "../runtime/llama.ts";
 import { Ladder } from "./ladder.ts";
 import { LocalModelTier } from "./local.ts";
 import { SequenceTier } from "./sequence.ts";
+import { CloudWriter } from "../runtime/cloud.ts";
 import type { Candidate, PastStep, PredictContext } from "./types.ts";
 
 export function toPast(h: HistEntry): PastStep {
@@ -44,7 +45,9 @@ export class LocalDecider implements Decider {
             console.warn(`[decider] ${this.server.path} missing: habits only (download it to ~/.tab/models)`);
             this.server = null as any;
         }
-        this.model = this.server ? new LocalModelTier(this.server) : null;
+        const cloud = new CloudWriter();
+        if (cloud.enabled) console.log(`[decider] long text is written by ${cloud.model} (TAB_CLOUD=1)`);
+        this.model = this.server ? new LocalModelTier(this.server, { cloud }) : null;
         const embedder = opts.embed === false ? null : new Embedder(opts.memory?.db ?? null);
         this.facts = new FactIndex(embedder?.available ? embedder : null);
         this.name = `local:habits${this.server ? `+${this.server.spec.name}` : ""}${this.ladder.fitted ? " (fitted ladder)" : ""}`;

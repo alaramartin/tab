@@ -54,6 +54,7 @@ Settings:
 | Apps never to read or record | `~/.tab/config.json`: `{"denyApps": ["com.example.app"]}` (password managers are already excluded) |
 | Model | `TAB_MODEL=qwen` (default), `lfm`, `qwen4`, or empty for no LLM |
 | Turn memory off | `TAB_MEMORY=off` |
+| Let Claude write long text (descriptions, replies) | `TAB_CLOUD=1` plus an Anthropic key. Off by default. When on, the screen's text and recent actions are sent to Anthropic, but only for a long-text field Tab already picked as your next step |
 | Use Claude instead of local models | `TAB_DECIDER=claude` |
 
 ## Tools
