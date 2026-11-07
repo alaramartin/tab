@@ -4,7 +4,7 @@
 
 Tab predicts your next action on your Mac and shows it as a ghost: a highlight on the button you're about to click, or gray text in the field you're about to fill. Press **Tab** to do it. Press **Esc** to dismiss it.
 
-It works in any app. It reads the front window through macOS Accessibility, reads the text of windows that expose nothing (canvas apps, games, some Electron apps) with on-device text recognition, learns from what you do, and predicts with models that run on your Mac. Nothing you do is sent anywhere.
+It works in any app. It reads the front window through macOS Accessibility, reads the text and icons of windows that expose nothing (canvas apps, games, some Electron apps) with on-device vision, learns from what you do, and predicts with models that run on your Mac. Nothing you do is sent anywhere.
 
 What it does:
 

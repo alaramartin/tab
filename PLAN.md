@@ -10,14 +10,13 @@ This file records how Tab was planned and built. It has five parts: what's still
 
 1. **Notice payment requests in any app.** The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
 2. **Design the HUD.** It's a placeholder: status, last payment, and an expandable Tab did / You did.
-3. **Test the pattern engine live.** Add a list window and a form window to the testbed, and an e2e step for teach once, repeat, and "do the remaining".
-4. **Store where each value came from** (copied from a screen, a known fact, n+1, a transform) with each step, so a recorded step can replay in a new context.
-5. **Similar past moments across apps.** Embed situations, so a moment in one app can recall what you did in a similar one elsewhere.
-6. **Incremental Accessibility refresh.** Re-walk only the subtree a notification names. Big windows still hit the 80 ms budget.
-7. **A vision-model pass for canvas windows,** beyond OCR.
-8. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-9. **Feed episode summaries to the model** as long-range context, and search memory from the app, not just the command line.
-10. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
+3. **Run the end-to-end tests that haven't run.** `npm run e2e:chores` (teach once, repeat, then do the remaining) is written but has never run. The same goes for patching a changed checkbox, slider or popup in place (`AXSensor.changed`), which has never run on a live window. `npm run e2e` last failed because the Mac was in use.
+4. **Values from facts and transforms.** Each typed value records whether it was copied from a screen, continued a sequence, repeated an earlier one, or was new. A value from a known fact or a transform (case, a date format) is still recorded as new.
+5. **Re-walk only what changed.** A changed value patches its one element. A structural change (a list appears, a dialog opens) still walks the whole window, and big windows hit the 80 ms budget. Walking just the subtree means numbering paths within it, since paths are numbered across the whole window today.
+6. **Canvas content beyond icons.** Vision finds text and icon-sized shapes. Larger things on a canvas (diagram boxes, images, game pieces) aren't elements yet.
+7. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
+8. **Search memory from the app.** Past tasks are searchable by meaning (`npm run memory -- search`), but only from the command line.
+9. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
 
 ---
 
@@ -140,6 +139,13 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
     - Logs hold no values by default.
     - The opt-in Claude tier (`TAB_CLOUD=1`) is used for long text only.
 
+11. **Later the same day (Nov 7).**
+    - Each typed value records where it came from: copied from a screen, the next in a sequence, typed before, or new. A habit whose value is always copied from the same field fills that field's current value.
+    - The local model's prompt includes up to two summaries of tasks finished in the same app in the last day.
+    - A new fast tier, similar moments: after a step in one app, it offers what followed a similar step in other apps.
+    - In windows Accessibility can't read, Vision finds icon-sized shapes (contours), and the icon namer names them. `TabShell --vision-selftest` checks this offscreen.
+    - Chores test windows (`--testbed --chores`) and `npm run e2e:chores`.
+
 ### How we worked
 
 - The plan was written first and kept as a progress log.
@@ -164,18 +170,19 @@ Once v2 worked, everything that existed only for the hackathon or as an alternat
 ```
 TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
   AXSensor        the front window   ──▶    memory.db (SQLite: screens, steps, ghosts, facts)
-  VisionSensor    OCR, icon crops           fast predictions: chores, sequences, habits, form facts   ~1 ms
+  VisionSensor    OCR, icons                fast predictions: chores, sequences, habits, form facts   ~1 ms
   ActionObserver  your clicks, typing       local LLM (Qwen3-1.7B on llama.cpp), after a pause       ~0.4 s
   Actuator        click / type / key  ◀──   one calibrated score per suggestion; a ghost above 0.6
   Overlay, HUD    the ghost                 payments (x402)
 ```
 
-- **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model.
+- **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model. A window with little Accessibility is read with on-device OCR, and the icons in it are found and named the same way.
 - **Memory** (`ActionObserver.swift`, `brain/src/memory/`): every click, typing burst and shortcut is saved with the element it hit and the screens before and after it.
   - Screens are stored once each, and a changed screen is stored as a small patch on the one before.
+  - A typed value also records where it came from (copied from a screen, the next in a sequence, typed before), so a step can be replayed with new values.
   - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
   - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search.
-- **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. The local model only runs once you pause, and stops as soon as you do something.
+- **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. They include what you did after a similar step in other apps. The local model only runs once you pause, and stops as soon as you do something.
 - **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
 
 ## 5. Development
@@ -185,10 +192,11 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 | `npm test` | Unit tests |
 | `npm run e2e` | End to end on TabShell's own test window: recording, acting, a habit becoming a ghost, form fills, completions, row numbering. It moves the real mouse and types, so leave the Mac alone while it runs. |
 | `npm run e2e:canvas` | The same for a window with no Accessibility tree |
+| `npm run e2e:chores` | Teach a chore once on a list, repeat it twice with Tab, then do the remaining rows |
 | `npm run eval [-- --llm]` | Replays memory.db and scores each predictor: accuracy, coverage at 85% precision, latency, per app |
 | `npm run memory -- stats` | What's in memory |
 | `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time) |
 | `npm run memory -- search <words>` | Finds past tasks by meaning |
 | `npm run send -- --listen` | Prints everything the hub sends |
 
-`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell.
+`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions.
