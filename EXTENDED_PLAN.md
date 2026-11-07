@@ -339,3 +339,31 @@ The combiner keeps separate weights for fast-only and full candidates. `npm run 
 - 10, 20, 30 by hand, then Tab gives 40, then Tab gives "Fill the remaining 2 (50 … 60)".
 
 51 unit tests pass.
+
+### 2026-11-07 (later): vision, icons, autocomplete, episodes, cleanup, latency (pushed to `origin/more-work`)
+
+- **Vision fallback.** `VisionSensor.swift` uses ScreenCaptureKit and Apple Vision fast OCR, about 90 ms per window in steady state. Windows with fewer than 6 labelled controls get OCR elements (`ocr:<text>`) on their own queue.
+  - Clicks on such windows are recorded against the OCR text under the pointer. The actuator clicks OCR targets at their screen position.
+  - `npm run e2e:canvas` runs on a window with no AX tree: four (Open, Archive) rounds by hand, then Open brings a "Click Archive" ghost, and Tab clicks the drawn button.
+  - **TabShell.app needs its own Screen Recording grant.** The test uses the debug binary for this reason.
+- **Icon names.** Unlabeled icon-size controls are cropped, keyed by dHash, and named once by LFM2-VL-450M ("what object is shown": Trash can, Star, Gear, Printer, about 130 ms each). Names are cached in `~/.tab/icon-labels.json`. Window buttons are named from their AX subrole. Unlabeled controls with no id get their AX path in the habit signature.
+- **Autocomplete while typing.** A non-empty focused field gets a completion from values typed before. A text ghost with `caret` draws only the rest of the text, at the insertion point. In the e2e, "Jane" becomes "Jane Doe".
+- **Episode summaries.** While you're idle the hub has the local model write one line per finished task, embedded for search: `npm run memory -- summarize | episodes | search "<words>"`.
+- **Consolidator.** It runs at hub start and every 6 hours: 30 days of screens (kept deltas are rewritten as keyframes), 90 days of steps, and form fills kept indefinitely.
+- **Per-app code removed.**
+  - The Calendar offer is gone. Its 7-step sequence is now a runner test fixture.
+  - Terminal is read through AX. Long values keep the text around the caret, which in a terminal means the latest output. TerminalReader is opt-in (`TAB_TERM_READER=1`).
+  - URLs printed on screen become "Open …" candidates.
+  - Jev is gone from env, preflight, tools and `web/`.
+- **The local model live.**
+  - A warm-up request at start gives a first call of about 1 s and about 430 ms p50 afterwards.
+  - Generated values that echo the field's label are dropped.
+  - Values that appear nowhere you've been are capped at 0.3×, so they don't show as ghosts.
+- **Latency.** **135 ms from click to ghost** in the e2e. The AX debounce is 30 ms after quiet and 100 ms during bursts. The hub predicts 40 ms after a screen settles. `TAB_TRACE=1` prints the timeline.
+- **Tests.** 53 unit tests. `npm run e2e`: 26 checks. `npm run e2e:canvas`: 7 checks.
+
+**Open items:**
+- Grant TabShell Screen Recording.
+- Record a few days of real use, then `npm run eval -- --model qwen --fit` to fit the combiner on real data.
+- Opt-in cloud only for long text: today, `TAB_DECIDER=claude` swaps the whole decider instead.
+- Incremental AX refresh for very large windows (55–62 ms snapshots in Chrome and VS Code).
