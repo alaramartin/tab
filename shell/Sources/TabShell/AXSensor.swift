@@ -32,18 +32,39 @@ func runningApp(_ id: String) -> NSRunningApplication? {
     return NSRunningApplication.runningApplications(withBundleIdentifier: id).first
 }
 
+/// ~/.tab/config.json, re-read whenever the file changes (no restart needed):
+///   {"denyApps": ["bundle.id", …]}   never read or record these (password managers are always excluded)
+///   {"onlyApps": ["bundle.id", …]}   allow-list: read and record only these apps; everything else is ignored
 enum TabConfig {
-    static var denyApps: Set<String> = {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tab/config.json")
-        guard let data = try? Data(contentsOf: url),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let extra = obj["denyApps"] as? [String] else { return defaultDenyApps }
-        return defaultDenyApps.union(extra)
-    }()
+    private static let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tab/config.json")
+    private static let lock = NSLock()
+    private static var loadedAt: Date? = nil
+    private static var checked = false
+    private static var deny: Set<String> = defaultDenyApps
+    private static var only: Set<String>? = nil
 
+    private static func refresh() {
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+        if checked && mtime == loadedAt { return }
+        checked = true
+        loadedAt = mtime
+        deny = defaultDenyApps
+        only = nil
+        guard let data = try? Data(contentsOf: url), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if let d = obj["denyApps"] as? [String] { deny.formUnion(d) }
+        if let o = obj["onlyApps"] as? [String], !o.isEmpty { only = Set(o) }
+        log("config: \(deny.count) denied apps\(only.map { ", only \($0.sorted().joined(separator: ", "))" } ?? "")")
+    }
+
+    /// True when Tab must not read, record or suggest anything in this app.
     static func denied(_ bid: String?) -> Bool {
         guard let bid else { return true }
-        return bid == selfBundleId || denyApps.contains(bid)
+        if bid == selfBundleId { return true }
+        lock.lock(); defer { lock.unlock() }
+        refresh()
+        if deny.contains(bid) { return true }
+        if let only, !only.contains(bid) { return true }
+        return false
     }
 }
 
@@ -447,7 +468,7 @@ final class AXPoller {
     private let ocrQueue = DispatchQueue(label: "tab.ocr", qos: .utility)
 
     private func tick() {
-        guard let target, AXIsProcessTrusted() else { return }
+        guard let target, AXIsProcessTrusted(), !TabConfig.denied(target.bundleId) else { return }
         seq += 1
         let t0 = CFAbsoluteTimeGetCurrent()
         guard let (snap, refs) = AXSensor.stateAndRefs(pid: target.pid, bundleId: target.bundleId, seq: seq) else { return }

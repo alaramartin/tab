@@ -123,13 +123,15 @@ enum IconLabeler {
     struct Request: Codable { var hash: String; var png: String }
     private static let lock = NSLock()
     private static var labels: [String: String] = load() // hash → name ("" = tried, no usable name)
+    private static var file: URL {
+        ProcessInfo.processInfo.environment["TAB_ICON_CACHE"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tab/icon-labels.json")
+    }
     private static var hashes: [String: String] = [:] // "app|path|w×h" → hash, for this session
     private static var pending = Set<String>()
-    private static let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tab/icon-labels.json")
     static let roles: Set<String> = ["button", "checkbox", "tab", "menuitem", "link", "select"]
 
     private static func load() -> [String: String] {
-        guard let d = try? Data(contentsOf: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tab/icon-labels.json")) else { return [:] }
+        guard let d = try? Data(contentsOf: file) else { return [:] }
         return (try? JSONDecoder().decode([String: String].self, from: d)) ?? [:]
     }
 

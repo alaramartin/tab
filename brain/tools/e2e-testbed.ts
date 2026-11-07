@@ -51,7 +51,7 @@ const hubLog = join(dir, "hub.log");
 // Habits only (TAB_MODEL=""): the loop under test is perception → memory → habit → ghost → Tab → exec.
 const hub = spawn("node", ["--import", "tsx", "src/hub.ts"], {
     cwd: join(ROOT, "brain"),
-    env: { ...process.env, TAB_TRACE: "1", TAB_MEMORY_FILE: dbFile, TAB_MODEL: process.env.E2E_MODEL ?? "", TAB_LADDER_FILE: join(dir, "ladder.json"), ANTHROPIC_API_KEY: "" },
+    env: { ...process.env, TAB_TRACE: "1", TAB_VERBOSE: "1", TAB_MEMORY_FILE: dbFile, TAB_MODEL: process.env.E2E_MODEL ?? "", TAB_LADDER_FILE: join(dir, "ladder.json"), ANTHROPIC_API_KEY: "" },
     stdio: ["ignore", openSync(hubLog, "a"), openSync(hubLog, "a")],
 });
 const testbed = spawn(SHELL, ["--testbed", "--signup"], { stdio: "ignore" });

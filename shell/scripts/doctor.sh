@@ -46,6 +46,11 @@ if [ -f "$HOME/.tab/memory.db" ]; then
 else
     warn "no ~/.tab/memory.db yet" "it's created when the hub first runs"
 fi
-[ -f "$HOME/.tab/config.json" ] && ok "~/.tab/config.json present (denyApps)"
+if [ -f "$HOME/.tab/config.json" ]; then
+    only=$(python3 -c "import json;print(', '.join(json.load(open('$HOME/.tab/config.json')).get('onlyApps', [])))" 2>/dev/null)
+    if [ -n "$only" ]; then ok "watching only: $only"; else ok "~/.tab/config.json present (denyApps)"; fi
+else
+    warn "no ~/.tab/config.json: every app except password managers is read" "to limit it: {\"onlyApps\": [...]} or {\"denyApps\": [...]}"
+fi
 
 exit $bad

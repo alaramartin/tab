@@ -11,6 +11,7 @@ import { IconNamer } from "./runtime/icons.ts";
 config({ path: new URL("../../.env", import.meta.url).pathname });
 
 const PORT = Number(process.env.HUB_PORT ?? 7800);
+const VERBOSE = !!process.env.TAB_VERBOSE;
 let shell: WebSocket | null = null;
 let lastActivity = Date.now();
 let web: WebSocket | null = null;
@@ -22,7 +23,9 @@ function out(to: "shell" | "web", m: HubToShell | HubToWeb): void {
     if (ws && ws.readyState === ws.OPEN) ws.send(s);
     for (const t of tools) if (t.readyState === t.OPEN) t.send(JSON.stringify({ to, msg: m }));
     if (process.env.TAB_TRACE && m.type !== "hud") console.log(`[trace] ${Date.now()} → ${to} ${m.type}`);
-    if (m.type !== "hud") console.log(`→ ${to} ${s.length > 200 ? s.slice(0, 200) + "…" : s}`);
+    // The console (and ~/.tab/hub.log under the login agent) gets message types only; TAB_VERBOSE=1 shows contents
+    // (ghost labels and typed values among them).
+    if (m.type !== "hud") console.log(VERBOSE ? `→ ${to} ${s.length > 200 ? s.slice(0, 200) + "…" : s}` : `→ ${to} ${m.type}`);
 }
 
 const memoryFile = process.env.TAB_MEMORY_FILE || DEFAULT_MEMORY_FILE;
@@ -70,7 +73,7 @@ const brain = new Brain({
         return namer.server ? (items: { hash: string; png: string }[]) => namer.name(items) : undefined;
     })(),
     onPredict: ({ source, latencyMs, action }) =>
-        console.log(`[predict] ${source} ${latencyMs.toFixed(1)} ms → ${action ? `${action.label} (${action.confidence})` : "none"}`),
+        console.log(`[predict] ${source} ${latencyMs.toFixed(1)} ms → ${action ? `${VERBOSE ? action.label : action.op} (${action.confidence.toFixed(2)})` : "none"}`),
 });
 
 const wss = new WebSocketServer({ host: "127.0.0.1", port: PORT });
@@ -99,7 +102,7 @@ wss.on("connection", (ws) => {
         }
         // Tools can impersonate either side: {"as":"shell"|"web", ...msg}
         const from = role === "tool" ? m.as ?? "web" : role;
-        if (m.type !== "state" && m.type !== "user_event" && m.type !== "icon_request") console.log(`← ${from} ${String(data).slice(0, 200)}`);
+        if (m.type !== "state" && m.type !== "user_event" && m.type !== "icon_request") console.log(VERBOSE ? `← ${from} ${String(data).slice(0, 200)}` : `← ${from} ${m.type}`);
         try {
             if (from === "shell") brain.fromShell(m);
             else if (from === "web") brain.fromWeb(m);

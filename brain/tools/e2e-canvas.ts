@@ -50,11 +50,11 @@ const hubLog = join(dir, "hub.log");
 const dbFile = join(dir, "memory.db");
 const hub = spawn("node", ["--import", "tsx", "src/hub.ts"], {
     cwd: join(ROOT, "brain"),
-    env: { ...process.env, TAB_MEMORY_FILE: dbFile, TAB_MODEL: "", TAB_LADDER_FILE: join(dir, "ladder.json") },
+    env: { ...process.env, TAB_VERBOSE: "1", TAB_MEMORY_FILE: dbFile, TAB_MODEL: "", TAB_LADDER_FILE: join(dir, "ladder.json") },
     stdio: ["ignore", openSync(hubLog, "a"), openSync(hubLog, "a")],
 });
 const shellLog = join(dir, "shell.log");
-const shell = spawn(SHELL, [], { stdio: ["ignore", openSync(shellLog, "a"), openSync(shellLog, "a")] });
+const shell = spawn(SHELL, [], { stdio: ["ignore", openSync(shellLog, "a"), openSync(shellLog, "a")], env: { ...process.env, TAB_ICON_CACHE: join(dir, "icon-labels.json") } });
 const canvasLog = join(dir, "canvas.txt");
 const canvas = spawn(SHELL, ["--testbed", "--canvas"], { stdio: "ignore", env: { ...process.env, TAB_CANVAS_LOG: canvasLog } });
 try {
