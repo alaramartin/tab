@@ -196,3 +196,83 @@ final class CanvasTestbed {
         NSApp.activate(ignoringOtherApps: true)
     }
 }
+
+/// `--chores`: a chore to teach once and repeat. "Releases" lists tickets and their pull requests (read-only); in
+/// "Tracker" the user enters one (Ticket, PR, Done) and saves. The form clears after each save, so every row is the
+/// same steps with that row's values.
+final class ChoresTestbed: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    let releases: NSWindow
+    let tracker: NSWindow
+    let rows: [[String]] = (1...5).map { ["ENG-\(140 + $0)", "#\(10 + $0)"] }
+    var saved: [String] = []
+    let ticket = NSTextField(frame: NSRect(x: 110, y: 130, width: 200, height: 24))
+    let pr = NSTextField(frame: NSRect(x: 110, y: 94, width: 200, height: 24))
+    let done = NSButton(checkboxWithTitle: "Done", target: nil, action: nil)
+    let status = NSTextField(labelWithString: "Nothing saved yet")
+
+    override init() {
+        releases = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        tracker = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        super.init()
+        releases.title = "Releases"
+        let table = NSTableView()
+        for (id, title) in [("ticket", "Ticket"), ("pr", "Pull request")] {
+            let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+            c.title = title
+            c.width = 130
+            table.addTableColumn(c)
+        }
+        table.dataSource = self
+        table.delegate = self
+        table.setAccessibilityLabel("Releases")
+        let scroll = NSScrollView(frame: NSRect(x: 10, y: 10, width: 280, height: 180))
+        scroll.documentView = table
+        releases.contentView = NSView(frame: releases.contentView!.bounds)
+        releases.contentView!.addSubview(scroll)
+
+        tracker.title = "Tracker"
+        let v = NSView(frame: tracker.contentView!.bounds)
+        tracker.contentView = v
+        for (label, f, y) in [("Ticket", ticket, 130.0), ("PR", pr, 94.0)] {
+            let l = NSTextField(labelWithString: label)
+            l.frame = NSRect(x: 20, y: y, width: 80, height: 22)
+            v.addSubview(l)
+            f.setAccessibilityLabel(label)
+            v.addSubview(f)
+        }
+        done.frame = NSRect(x: 110, y: 62, width: 100, height: 22)
+        v.addSubview(done)
+        let save = NSButton(title: "Save", target: self, action: #selector(saveEntry))
+        save.frame = NSRect(x: 110, y: 20, width: 90, height: 30)
+        save.bezelStyle = .rounded
+        v.addSubview(save)
+        status.frame = NSRect(x: 20, y: 166, width: 300, height: 22)
+        v.addSubview(status)
+
+        releases.setFrameTopLeftPoint(NSPoint(x: 120, y: (NSScreen.main?.visibleFrame.maxY ?? 800) - 80))
+        tracker.setFrameTopLeftPoint(NSPoint(x: releases.frame.maxX + 16, y: releases.frame.maxY))
+        releases.orderFront(nil)
+        tracker.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func saveEntry() {
+        let entry = "\(ticket.stringValue) \(pr.stringValue) \(done.state == .on ? "done" : "open")"
+        saved.append(entry)
+        status.stringValue = "Saved \(entry)"
+        // Test hook: the e2e reads every saved entry here.
+        if let path = ProcessInfo.processInfo.environment["TAB_CHORES_LOG"] {
+            try? (saved.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        ticket.stringValue = ""
+        pr.stringValue = ""
+        done.state = .off
+        tracker.makeFirstResponder(nil)
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
+        NSTextField(labelWithString: rows[row][col?.identifier.rawValue == "ticket" ? 0 : 1])
+    }
+}

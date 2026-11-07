@@ -9,6 +9,7 @@
 //   TabShell --ax-bench [bundleId] [N]  time N snapshots: p50/p95/max, element counts by role
 //   TabShell --exec '<Action JSON>'  run one action via the Actuator (click / type / key / navigate)
 //   TabShell --testbed             a native test window (form + table) for end-to-end tests; touches no user app
+//                                  (--signup adds a second form, --canvas a window with no AX, --chores a list and a tracker)
 //   TabShell --ocr [bundleId]      read the app's window text and icons with Vision (vision fallback; needs Screen Recording)
 //   TabShell --vision-selftest     read a drawn window image offscreen: text, icon boxes, cached names (no permissions needed)
 //   flags: --high-contrast, --hub ws://host:port
@@ -555,9 +556,10 @@ var selftestOverlay: Overlay?
 
 var testbed: Testbed?
 var canvasTestbed: CanvasTestbed?
+var choresTestbed: ChoresTestbed?
 if args.contains("--testbed") {
     app.setActivationPolicy(.regular)
-    if args.contains("--canvas") { canvasTestbed = CanvasTestbed() } else { testbed = Testbed() }
+    if args.contains("--canvas") { canvasTestbed = CanvasTestbed() } else if args.contains("--chores") { choresTestbed = ChoresTestbed() } else { testbed = Testbed() }
     log("testbed: window open")
 } else if args.contains("--selftest") {
     let o = Overlay(highContrast: highContrast)

@@ -11,7 +11,8 @@
     "memory": "node --no-warnings=ExperimentalWarning --import tsx tools/memory.ts",
     "eval": "node --no-warnings=ExperimentalWarning --import tsx tools/eval.ts",
     "e2e": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-testbed.ts",
-    "e2e:canvas": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-canvas.ts"
+    "e2e:canvas": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-canvas.ts",
+    "e2e:chores": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-chores.ts"
   },
   "dependencies": {
     "@x402/core": "^2.30.0",
