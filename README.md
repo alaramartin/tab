@@ -45,7 +45,9 @@ cd brain && npm i && npm start            # hub; starts the models in the backgr
 shell/scripts/build-shell.sh --run        # TabShell.app; log in ~/.tab/shell.log
 ```
 
-Grant TabShell **Accessibility** (required) and **Screen Recording** (for the OCR fallback) in System Settings → Privacy & Security.
+Grant TabShell **Accessibility** (required) and **Screen Recording** (for the OCR fallback and icon names) in System Settings → Privacy & Security.
+
+The menu bar icon has **Pause Tab** (nothing is read, recorded or suggested until you resume) and **Forget the Last Hour**.
 
 Settings:
 

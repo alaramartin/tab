@@ -153,13 +153,18 @@ enum AXSensor {
         let bounds = winInfo.frame
         var counts: [String: Int] = [:]
         // Attributes are fetched when a node is dequeued, so nodes past the budget cost nothing.
+        // Two queues: page content (anything inside an AXWebArea) is visited before the browser's own chrome, so when the
+        // time budget runs out on a big page, it's toolbar buttons that are lost, not the page.
         var queue: [(AXUIElement, String?, Int, GridRef?)] = winInfo.children.map { ($0, nil, 1, nil) }
-        var head = 0
+        var prio: [(AXUIElement, String?, Int, GridRef?)] = []
+        var head = 0, pHead = 0, visited = 0
         let t0 = CFAbsoluteTimeGetCurrent()
-        while head < queue.count {
-            if head >= limits.maxNodes || (CFAbsoluteTimeGetCurrent() - t0) * 1000 > limits.budgetMs { break }
-            let (el, section, depth, inCell) = queue[head]
-            head += 1
+        while pHead < prio.count || head < queue.count {
+            if visited >= limits.maxNodes || (CFAbsoluteTimeGetCurrent() - t0) * 1000 > limits.budgetMs { break }
+            let inPage = pHead < prio.count
+            let (el, section, depth, inCell) = inPage ? prio[pHead] : queue[head]
+            if inPage { pHead += 1 } else { head += 1 }
+            visited += 1
             let info = AXInfo(el)
             if let f = info.frame, let b = bounds, f.w > 0, f.h > 0, !intersects(f, b) { continue } // offscreen subtree
             let base = pathBase(info)
@@ -173,7 +178,10 @@ enum AXSensor {
             var childSection = section
             if sectionRoles.contains(info.role), !info.label.isEmpty { childSection = String(info.label.prefix(60)) }
             if depth < 40 {
-                for c in info.children { queue.append((c, childSection, depth + 1, cell)) }
+                let toPage = inPage || info.role == "AXWebArea"
+                for c in info.children {
+                    if toPage { prio.append((c, childSection, depth + 1, cell)) } else { queue.append((c, childSection, depth + 1, cell)) }
+                }
             }
         }
     }
