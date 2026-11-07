@@ -2,11 +2,26 @@
 
 Tab predicts your next action on the Mac and shows it as a ghost: a highlight on the button you're about to click, or gray text in the field you're about to fill. Tab does it, Esc dismisses it.
 
-This file records how Tab was planned and built. It has five parts: the hackathon version (October 2026), the general version that followed (November 2026), how Tab works now, how to develop it, and what's still to do. Run instructions are in the README. Design details live in the code, next to what they describe.
+This file records how Tab was planned and built. It has five parts: what's still to do, the hackathon version (October 2026), the general version that followed (November 2026), how Tab works now, and how to develop it. Run instructions are in the README. Design details live in the code, next to what they describe.
 
 ---
 
-## 1. The hackathon version (Oct 13–14, 2026)
+## 1. Still to do
+
+1. **Notice payment requests in any app.** The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
+2. **Design the HUD.** It's a placeholder: status, last payment, and an expandable Tab did / You did.
+3. **Test the pattern engine live.** Add a list window and a form window to the testbed, and an e2e step for teach once, repeat, and "do the remaining".
+4. **Store where each value came from** (copied from a screen, a known fact, n+1, a transform) with each step, so a recorded step can replay in a new context.
+5. **Similar past moments across apps.** Embed situations, so a moment in one app can recall what you did in a similar one elsewhere.
+6. **Incremental Accessibility refresh.** Re-walk only the subtree a notification names. Big windows still hit the 80 ms budget.
+7. **A vision-model pass for canvas windows,** beyond OCR.
+8. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
+9. **Feed episode summaries to the model** as long-range context, and search memory from the app, not just the command line.
+10. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
+
+---
+
+## 2. The hackathon version (Oct 13–14, 2026)
 
 Built for the Paradigm Frontiers 2026 hackathon, due Wednesday Oct 14 at 4 pm PT. That code is frozen at [alaramartin/paradigmhacks](https://github.com/alaramartin/paradigmhacks).
 
@@ -64,7 +79,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 
 ---
 
-## 2. v2: general and local (Nov 4–7, 2026)
+## 3. v2: general and local (Nov 4–7, 2026)
 
 **The goal:** a tab autocomplete for the whole computer. Any app, no per-app code, visuals where Accessibility gives nothing, and low latency, which was the main concern. It started from two ideas in your notes:
 - Record actions as text from the Accessibility tree, not pixels, so they can be embedded and searched.
@@ -131,8 +146,6 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 - The eval came before tuning, and the end-to-end tests ran on Tab's own windows, never your apps.
 - Work was committed and pushed as it went. On Nov 7, v2 moved to its own repo, [alaramartin/tab](https://github.com/alaramartin/tab).
 
----
-
 ### Simplifying (Nov 7)
 
 Once v2 worked, everything that existed only for the hackathon or as an alternative went:
@@ -144,7 +157,9 @@ Once v2 worked, everything that existed only for the hackathon or as an alternat
 - **HUD:** compact, with the Tab did / You did breakdown behind a click. The end-of-demo Reveal card was removed.
 - **Files:** Jev's docs, demo-day scripts, `design/`, the old fixtures and the design skills in `.claude/` were removed. The two video projects moved into `demo-videos/`.
 
-## 3. How Tab works
+---
+
+## 4. How Tab works
 
 ```
 TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
@@ -163,7 +178,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 - **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. The local model only runs once you pause, and stops as soon as you do something.
 - **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
 
-## 4. Development
+## 5. Development
 
 | Command (in `brain/`) | What it does |
 | --- | --- |
@@ -177,16 +192,3 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 | `npm run send -- --listen` | Prints everything the hub sends |
 
 `TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell.
-
-## 5. Still to do
-
-1. **Notice payment requests in any app.** The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
-2. **Design the HUD.** It's a placeholder: status, last payment, and an expandable Tab did / You did.
-3. **Test the pattern engine live.** Add a list window and a form window to the testbed, and an e2e step for teach once, repeat, and "do the remaining".
-4. **Store where each value came from** (copied from a screen, a known fact, n+1, a transform) with each step, so a recorded step can replay in a new context.
-5. **Similar past moments across apps.** Embed situations, so a moment in one app can recall what you did in a similar one elsewhere.
-6. **Incremental Accessibility refresh.** Re-walk only the subtree a notification names. Big windows still hit the 80 ms budget.
-7. **A vision-model pass for canvas windows,** beyond OCR.
-8. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-9. **Feed episode summaries to the model** as long-range context, and search memory from the app, not just the command line.
-10. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
