@@ -144,6 +144,7 @@ export type ShellToHub =
     | { type: "frontmost"; app: AppId; window: string }
     | ScreenState // native (Terminal) or ax (any app)
     | UserEvent // native: resolved actions in any app
+    | { type: "icon_request"; items: { hash: string; png: string }[] } // crops of unlabeled icons (base64 PNG)
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }
     | { type: "dismiss"; ghostId: string }
@@ -155,7 +156,8 @@ export type HubToShell =
     | { type: "ghost"; ghost: Ghost }
     | { type: "ghost_hide" }
     | { type: "exec"; ghostId: string; action: Action } // switch_app only
-    | { type: "hud"; hud: Hud };
+    | { type: "hud"; hud: Hud }
+    | { type: "icon_labels"; items: { hash: string; label: string }[] }; // "" = no usable name
 
 // C → hub
 export type WebToHub =

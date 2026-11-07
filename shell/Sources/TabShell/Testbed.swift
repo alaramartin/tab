@@ -54,6 +54,15 @@ final class Testbed: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         v.addSubview(submit)
         status.frame = NSRect(x: 270, y: y + 4, width: 270, height: 22)
         v.addSubview(status)
+        // Icon-only buttons with no title and no accessibility label: IconLabeler names them from their pixels.
+        for (i, sym) in ["trash", "star", "gearshape", "printer"].enumerated() {
+            let img = NSImage(systemSymbolName: sym, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 18, weight: .regular))!
+            let b = NSButton(image: img, target: self, action: #selector(submitted))
+            b.bezelStyle = .texturedRounded
+            b.frame = NSRect(x: 20 + CGFloat(i) * 34, y: y + 2, width: 30, height: 28)
+            b.setAccessibilityLabel(nil)
+            v.addSubview(b)
+        }
         y -= 20
 
         let scroll = NSScrollView(frame: NSRect(x: 20, y: 20, width: 520, height: y - 30))

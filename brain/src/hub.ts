@@ -6,6 +6,7 @@ import { Brain } from "./brain.ts";
 import { makeDecider } from "./model.ts";
 import { DEFAULT_WORKFLOWS_FILE } from "./pattern.ts";
 import { DEFAULT_MEMORY_FILE, Memory } from "./memory/store.ts";
+import { IconNamer } from "./runtime/icons.ts";
 
 config({ path: new URL("../../.env", import.meta.url).pathname });
 
@@ -48,6 +49,10 @@ const brain = new Brain({
     decider,
     workflowsFile: process.env.TAB_WORKFLOWS_FILE || DEFAULT_WORKFLOWS_FILE,
     memory,
+    nameIcons: (() => {
+        const namer = new IconNamer();
+        return namer.server ? (items: { hash: string; png: string }[]) => namer.name(items) : undefined;
+    })(),
     onPredict: ({ source, latencyMs, action }) =>
         console.log(`[predict] ${source} ${latencyMs.toFixed(1)} ms → ${action ? `${action.label} (${action.confidence})` : "none"}`),
 });
@@ -76,7 +81,7 @@ wss.on("connection", (ws) => {
         }
         // Tools can impersonate either side: {"as":"shell"|"web", ...msg}
         const from = role === "tool" ? m.as ?? "web" : role;
-        if (m.type !== "state" && m.type !== "user_event") console.log(`← ${from} ${String(data).slice(0, 200)}`);
+        if (m.type !== "state" && m.type !== "user_event" && m.type !== "icon_request") console.log(`← ${from} ${String(data).slice(0, 200)}`);
         try {
             if (from === "shell") brain.fromShell(m);
             else if (from === "web") brain.fromWeb(m);

@@ -95,6 +95,29 @@ try {
     await sleep(1500);
     const status = counts();
     check(/Archive=5/.test(status), `Tab clicked the drawn Archive button (${status})`);
+
+    // ---- icon-only buttons get names from their pixels ----
+    canvas.kill();
+    const tb = spawn(SHELL, ["--testbed"], { stdio: "ignore" });
+    try {
+        await sleep(2000);
+        execFileSync("osascript", ["-e", `tell application "System Events" to set frontmost of (first process whose unix id is ${tb.pid}) to true`]);
+        let named: string[] = [];
+        for (let i = 0; i < 40 && named.length < 4; i++) {
+            await sleep(250);
+            const m = /icons named: (.*)/.exec(readFileSync(shellLog, "utf8").split("\n").filter((l) => l.includes("icons named")).join(", "));
+            named = m ? m[1].split(", ").filter((x) => x && x !== "?") : [];
+        }
+        check(named.length >= 3, `icon-only buttons were named by the vision model (${named.join(", ")})`);
+        await sleep(1200);
+        const mem2 = new Memory(dbFile);
+        const latest = mem2.db.prepare("SELECT hash FROM snapshots WHERE app = 'exe:TabShell' ORDER BY last_ts DESC LIMIT 1").get() as { hash: string } | undefined;
+        const labels = latest ? mem2.snapshot(latest.hash)!.els.filter((e) => e.r === "button").map((e) => e.l) : [];
+        mem2.close();
+        check(labels.some((l) => /trash/i.test(l)) && labels.some((l) => /star/i.test(l)), `the names are on the screens the hub sees (${labels.join(", ")})`);
+    } finally {
+        tb.kill();
+    }
 } catch (err) {
     console.error("e2e error:", (err as Error).message);
     fails++;

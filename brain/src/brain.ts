@@ -29,6 +29,8 @@ export interface BrainOpts {
     immediate?: boolean;
     /** Where learned workflows are saved (`~/.tab/workflows.json` in the hub); omit for memory only (tests). */
     workflowsFile?: string | null;
+    /** Name icon-only controls from their pixels (the hub's vision model); omit to leave them unnamed. */
+    nameIcons?(items: { hash: string; png: string }[]): Promise<{ hash: string; label: string }[]>;
     /** Action memory (~/.tab/memory.db in the hub); omit in tests that don't need it. */
     memory?: Memory | null;
     onPredict?(info: { source: "pattern" | "model"; latencyMs: number; action: Action | null }): void;
@@ -118,6 +120,13 @@ export class Brain {
                 // AX reads of Chrome duplicate what CDP reports when it's connected: let C speak for its pages then.
                 if (m.app === CHROME && this.store.webLive()) break;
                 this.onUserEvent(m);
+                break;
+            case "icon_request":
+                if (this.o.nameIcons && Array.isArray(m.items) && m.items.length)
+                    this.o.nameIcons(m.items).then(
+                        (items) => this.o.sendShell({ type: "icon_labels", items }),
+                        (err) => console.error("[icons]", (err as Error).message),
+                    );
                 break;
             case "input":
                 this.hud.youDid++;

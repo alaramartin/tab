@@ -246,6 +246,9 @@ enum AXSensor {
         let secure = isSecure(i)
         var label = i.label
         if label.isEmpty { label = i.placeholder }
+        // Window buttons say what they are in their subrole.
+        if label.isEmpty, let named = ["AXCloseButton": "Close window", "AXMinimizeButton": "Minimize", "AXZoomButton": "Zoom",
+                                       "AXFullScreenButton": "Full screen"][i.subrole] { label = named }
         if label.isEmpty, role == "cell" || role == "row" { label = "" } // cells are addressed by grid, not label
         else if label.isEmpty, role == "text" { return nil }
         var value: String? = nil

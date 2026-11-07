@@ -14,6 +14,7 @@ export interface ModelSpec {
     file: string;
     family?: Family;
     embedding?: boolean;
+    mmproj?: string; // vision models: the image projector file
 }
 
 export const MODELS: Record<string, ModelSpec> = {
@@ -21,6 +22,7 @@ export const MODELS: Record<string, ModelSpec> = {
     qwen: { name: "qwen", file: "Qwen3-1.7B-Q4_K_M.gguf", family: "qwen3" },
     qwen4: { name: "qwen4", file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", family: "chatml" }, // non-thinking instruct
     embed: { name: "embed", file: "embeddinggemma-300M-Q8_0.gguf", embedding: true },
+    vlm: { name: "vlm", file: "LFM2-VL-450M-Q8_0.gguf", mmproj: "mmproj-LFM2-VL-450M-Q8_0.gguf", family: "lfm" },
 };
 
 /** Chat prompt in the model's own template, ending where the assistant's answer starts. */
@@ -88,6 +90,7 @@ export class LlamaServer {
             if (!this.available()) throw new Error(`model file missing: ${this.path}`);
             const args = ["-m", this.path, "--port", String(this.port), "--host", "127.0.0.1", "-ngl", "99", "--no-webui",
                 "-c", String(this.opts.ctx ?? 4096), "-np", "1"];
+            if (this.spec.mmproj) args.push("--mmproj", join(MODELS_DIR, this.spec.mmproj));
             if (this.spec.embedding) args.push("--embedding", "--pooling", "mean", "-ub", "2048", "-b", "2048");
             else args.push("--cache-reuse", "64");
             this.proc = spawn("llama-server", args, { stdio: this.opts.log ? "inherit" : "ignore" });
@@ -177,3 +180,4 @@ function normalize(v: number[]): number[] {
 
 export const CHAT_PORT = Number(process.env.TAB_CHAT_PORT ?? 7811);
 export const EMBED_PORT = Number(process.env.TAB_EMBED_PORT ?? 7812);
+export const VLM_PORT = Number(process.env.TAB_VLM_PORT ?? 7816);
