@@ -1,4 +1,4 @@
-// Generic execution in any app (EXTENDED_PLAN.md §2): no per-app code.
+// Generic execution in any app: no per-app code.
 //   click     AXPress when the element supports it, else a real click at its centre
 //   type      popups: open and pick the item; fields: focus, select all, then keystrokes (short text) or a paste that
 //             restores the clipboard (long or multi-line text); returns once the field shows the text

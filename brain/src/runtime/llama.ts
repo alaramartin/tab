@@ -1,4 +1,4 @@
-// Local model runtime (EXTENDED_PLAN.md §4 T2): llama.cpp's llama-server as a child process, one per model.
+// Local model runtime: llama.cpp's llama-server as a child process, one per model.
 // Models live in ~/.tab/models (TAB_MODELS_DIR). The chat model runs with prompt caching, so a request that shares a
 // prefix with the previous one (the fixed instructions, often the same screen) only pays for the new tokens.
 import { spawn, type ChildProcess } from "node:child_process";

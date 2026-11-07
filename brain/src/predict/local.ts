@@ -1,4 +1,4 @@
-// T2: the local LLM picks the next action from code-built candidates (EXTENDED_PLAN.md §4).
+// T2: the local LLM picks the next action from code-built candidates.
 // One forward pass: the answer is a single letter, and its probability (renormalised over the valid letters,
 // "None" included) is the candidate's score. The prompt puts what changes least first (instructions, then the
 // screen, then recent actions, then the options) so llama-server's prompt cache covers as much as possible.

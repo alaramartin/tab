@@ -1,4 +1,4 @@
-// Situation index (EXTENDED_PLAN.md §3.2.5), first version: past moments that look like now, and what the user did
+// Situation index, first version: past moments that look like now, and what the user did
 // next. "Looks like now" = the same kind of screen, ranked by the same previous action and the same element touched
 // last, then recency. The model gets the top few as examples of this user's own behaviour, which a small model can
 // follow far better than it can guess. (Embedding similarity across screen kinds comes on top of this.)

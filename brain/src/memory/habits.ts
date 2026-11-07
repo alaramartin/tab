@@ -1,4 +1,4 @@
-// Habit graph (EXTENDED_PLAN.md §3.2.3): "after you do X here, you usually do Y".
+// Habit graph: "after you do X here, you usually do Y".
 //
 // Every step is abstracted into a template with its variable parts lifted out:
 //   screen kind (app + host/path or window title, digits folded) · op · element signature (role, label, section,

@@ -1,4 +1,4 @@
-// The hub's decider (EXTENDED_PLAN.md §4): the prediction ladder behind the Brain's Decider interface.
+// The hub's decider: the prediction ladder behind the Brain's Decider interface.
 //   fast()    habits (memory) → combiner. ~1 ms, synchronous: the Brain shows it right away when it's confident.
 //   decide()  habits + the local LLM (reranks and fills values) → combiner. ~0.4 s; the Brain calls it after the
 //             user has paused, and aborts it when anything changes.

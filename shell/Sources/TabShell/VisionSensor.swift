@@ -1,4 +1,4 @@
-// Vision fallback (EXTENDED_PLAN.md §1 VisionSensor): for windows whose AX tree says little (canvas apps, games,
+// Vision fallback: for windows whose AX tree says little (canvas apps, games,
 // CEF apps like Spotify), capture the window and read its text with Apple Vision, on device. Each line of text
 // becomes a pseudo-element with a real screen rect (path "ocr:<text>"), so prediction, ghosts and clicks work the
 // same as for AX elements. Needs Screen Recording permission; without it, nothing happens.
@@ -115,7 +115,7 @@ enum VisionSensor {
     }
 }
 
-/// Names for icon-only controls (EXTENDED_PLAN.md §1, "icon labelling cache"). An unlabeled button, checkbox or tab
+/// Names for icon-only controls. An unlabeled button, checkbox or tab
 /// of icon size is cropped from the window, keyed by a perceptual hash (dHash), and named once by the hub's small
 /// vision model ("Trash can", "Gear"). Names are cached by hash in ~/.tab/icon-labels.json, so the same icon in any
 /// app is named for free afterwards. Needs Screen Recording.

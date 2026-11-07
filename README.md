@@ -1,6 +1,6 @@
 # Tab
 
-> **Status:** v2, in progress. The hackathon proof of concept it grew out of is frozen at [alaramartin/paradigmhacks](https://github.com/alaramartin/paradigmhacks). Follow [@alara_martin_](https://x.com/alara_martin_) for updates.
+> **Status:** In progress. Follow [@alara_martin\_](https://x.com/alara_martin_) for updates.
 
 Tab predicts your next action on your Mac and shows it as a ghost: a highlight on the button you're about to click, or gray text in the field you're about to fill. Press **Tab** to do it. Press **Esc** to dismiss it.
 
@@ -29,7 +29,7 @@ TabShell (Swift, menu bar)                Hub + brain (TypeScript, ws://127.0.0.
 - **Prediction** (`brain/src/predict/`): the fast tiers run on every change. The local model reranks candidates and fills values, and only runs once you pause. A logistic combiner turns all of it into one probability, and a ghost shows above 0.6.
 - **Execution** (`Actuator.swift`): AXPress or a real click, typing or pasting (your clipboard is restored afterwards), any key combo, dropdown choices.
 
-The full design and progress log are in [`EXTENDED_PLAN.md`](EXTENDED_PLAN.md).
+How Tab was planned and built, and what's still to do, is in [`PLAN.md`](PLAN.md).
 
 ## Running it
 
@@ -51,31 +51,25 @@ The menu bar icon has **Pause Tab** (nothing is read, recorded or suggested unti
 
 Settings:
 
-| What | How |
-|---|---|
-| Apps never to read or record | `~/.tab/config.json`: `{"denyApps": ["com.example.app"]}` (password managers are always excluded) |
-| Read and record **only** some apps | `~/.tab/config.json`: `{"onlyApps": ["com.apple.mail", "com.google.Chrome"]}`. Everything else is ignored. Edits apply right away. |
-| Model | `TAB_MODEL=qwen` (default), `lfm`, `qwen4`, or empty for no LLM |
-| Turn memory off (suggest, but save nothing to disk) | `TAB_MEMORY=off` |
-| Debug logs (off by default) | `TAB_VERBOSE=1` shows ghost text and values in the hub's console; `TAB_PREDICTION_LOG=1` and `TAB_SESSION_LOG=1` write `brain/logs/` |
-| Let Claude write long text (descriptions, replies) | `TAB_CLOUD=1` plus an Anthropic key. Off by default. When on, the screen's text and recent actions are sent to Anthropic, but only for a long-text field Tab already picked as your next step |
-| Use Claude instead of local models | `TAB_DECIDER=claude` |
+| What                                                | How                                                                                                                                                                                           |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apps never to read or record                        | `~/.tab/config.json`: `{"denyApps": ["com.example.app"]}` (password managers are always excluded)                                                                                             |
+| Read and record **only** some apps                  | `~/.tab/config.json`: `{"onlyApps": ["com.apple.mail", "com.google.Chrome"]}`. Everything else is ignored. Edits apply right away.                                                            |
+| Model                                               | `TAB_MODEL=qwen` (default), `lfm`, `qwen4`, or empty for no LLM                                                                                                                               |
+| Turn memory off (suggest, but save nothing to disk) | `TAB_MEMORY=off`                                                                                                                                                                              |
+| Debug logs (off by default)                         | `TAB_VERBOSE=1` shows ghost text and values in the hub's console; `TAB_PREDICTION_LOG=1` and `TAB_SESSION_LOG=1` write `brain/logs/`                                                          |
+| Let Claude write long text (descriptions, replies)  | `TAB_CLOUD=1` plus an Anthropic key. Off by default. When on, the screen's text and recent actions are sent to Anthropic, but only for a long-text field Tab already picked as your next step |
+| Use Claude instead of local models                  | `TAB_DECIDER=claude`                                                                                                                                                                          |
 
 ## Tools
 
-| Command (in `brain/`) | What it does |
-|---|---|
-| `npm test` | Unit tests |
-| `npm run e2e` | End to end on TabShell's own test window: recording, actuator, habit → ghost → Tab, form fill, row numbering |
-| `npm run e2e:canvas` | The OCR path on a window with no Accessibility tree |
-| `npm run eval [-- --model qwen]` | Replays memory.db and scores every tier: accuracy, coverage at 85% precision, latency, per app |
-| `npm run memory -- stats` | What's in memory |
-| `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time) |
+| Command (in `brain/`)                 | What it does                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `npm test`                            | Unit tests                                                                                                   |
+| `npm run e2e`                         | End to end on TabShell's own test window: recording, actuator, habit → ghost → Tab, form fill, row numbering |
+| `npm run e2e:canvas`                  | The OCR path on a window with no Accessibility tree                                                          |
+| `npm run eval [-- --model qwen]`      | Replays memory.db and scores every tier: accuracy, coverage at 85% precision, latency, per app               |
+| `npm run memory -- stats`             | What's in memory                                                                                             |
+| `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time)                                          |
 
 `TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell.
-
-## Hackathon version
-
-The hackathon version ([paradigmhacks](https://github.com/alaramartin/paradigmhacks)) paid HTTP 402 paywalls (x402 and MPP on testnets) from the ghost, after checking that the amount matched the page. That code is still here under `web/` (Chrome over CDP, payments, demo sites) and still works. Here it's optional: without it, Chrome is read through Accessibility like every other app.
-
-Testnet only. Never commit keys.

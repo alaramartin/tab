@@ -1,4 +1,4 @@
-// Field facts (EXTENDED_PLAN.md §3.2.2): forms are retrieval.
+// Field facts: forms are retrieval.
 //
 // Every value the user types into a form field becomes a fact keyed by what the field *means*: its label (or
 // placeholder), section and window, embedded as text. A new empty field is matched against those keys by cosine

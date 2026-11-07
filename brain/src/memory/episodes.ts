@@ -1,4 +1,4 @@
-// Episode summaries (EXTENDED_PLAN.md §3.2.6): one line per finished task, written by the local model while the user
+// Episode summaries: one line per finished task, written by the local model while the user
 // is idle, and embedded so past work can be searched by meaning ("the form I filled last week").
 import { stepDesc } from "../predict/generic.ts";
 import type { PastStep } from "../predict/types.ts";

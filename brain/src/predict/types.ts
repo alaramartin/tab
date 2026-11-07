@@ -1,4 +1,4 @@
-// The prediction ladder's common shapes (EXTENDED_PLAN.md §4). Every tier takes the same context and returns scored
+// The prediction ladder's common shapes. Every tier takes the same context and returns scored
 // candidates; the live brain and the offline eval (tools/eval.ts) drive tiers through exactly this interface.
 import type { Action, El, ScreenState } from "../../../protocol/types.ts";
 

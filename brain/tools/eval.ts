@@ -1,4 +1,4 @@
-// Offline eval of the prediction ladder on recorded steps (EXTENDED_PLAN.md §6).
+// Offline eval of the prediction ladder on recorded steps.
 //
 // Replays memory.db in time order. At every user step it asks each predictor for the next action, using only what
 // happened before (the screen the step was taken on, earlier screens, earlier steps), scores the top candidate

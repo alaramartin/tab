@@ -1,4 +1,4 @@
-// Opt-in cloud tier for long text (EXTENDED_PLAN.md §4 T3): a PR description, an email body, a comment. A 1.7B local
+// Opt-in cloud tier for long text: a PR description, an email body, a comment. A 1.7B local
 // model writes these badly; Claude writes them well. Only with TAB_CLOUD=1 and Anthropic credentials, only for long-text
 // fields the local model already picked as the next step, and the result is a ghost: nothing is typed without Tab.
 // What is sent: the screen's text (as the local model sees it), the last screen of another app, and recent actions.

@@ -1,4 +1,4 @@
-// The ladder's last step (EXTENDED_PLAN.md §4 "Ranking"): merge every tier's candidates for the same action and
+// The ladder's last step: merge every tier's candidates for the same action and
 // turn their evidence into one calibrated probability with a logistic model. Raw tier scores aren't comparable (the
 // LLM is overconfident; the habit model is conservative when evidence is thin), and agreement between tiers is
 // strong evidence on its own. Weights are fitted on recorded steps (`npm run eval -- --fit`) and saved to

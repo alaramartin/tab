@@ -1,4 +1,4 @@
-// Sequence extrapolation (EXTENDED_PLAN.md §4 T0): "you're numbering rows; the next is 4, then the rest".
+// Sequence extrapolation: "you're numbering rows; the next is 4, then the rest".
 //
 // Looks at the user's last type steps into the same kind of field (same element signature: role, label, column) on
 // consecutive rows. If the values follow a rule (arithmetic numbers, prefix + number like ENG-141 → ENG-142 keeping

@@ -1,4 +1,4 @@
-// Action memory, raw layer (EXTENDED_PLAN.md §3.1). One SQLite file, ~/.tab/memory.db.
+// Action memory, raw layer. One SQLite file, ~/.tab/memory.db.
 //
 //   snapshots  content-addressed screens: meaning only (no rects, no ids), zstd-compressed, stored once however
 //              often the same screen comes back; `seen` and `last_ts` count the repeats
@@ -7,7 +7,7 @@
 //   ghosts     every suggestion shown and what happened to it (accepted / dismissed / ignored): labels for eval
 //   episodes   the step stream cut into tasks at app switches and 2-minute gaps
 //
-// The derived layer (provenance, field facts, templates, situations) builds on these tables; see derive.ts.
+// What is learned from these tables lives next door: habits.ts, facts.ts, situations.ts, episodes.ts.
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -324,7 +324,7 @@ export class Memory {
     }
 
     /**
-     * The Consolidator (EXTENDED_PLAN.md §3.3), run at hub start and every few hours.
+     * The Consolidator, run at hub start and every few hours.
      *   screens  kept `screenDays` (30): older ones are deleted; a newer screen delta-encoded on a deleted one is
      *            rewritten as a full keyframe first, so every kept screen still decodes
      *   steps    kept `stepDays` (90), except form fills (type steps into fields), which are what field facts are

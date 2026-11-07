@@ -363,7 +363,7 @@ if [ -n "$dump" ]; then
         : # same cause as the Accessibility ✗ above
     else
         [ "${#err}" -gt 110 ] && err="${err:0:110}…"
-        warn "TabShell can't read Terminal: ${err:-unknown error}" "bring a Terminal window to the front and rerun; see STATUS.md (A, Terminal reader)"
+        warn "TabShell can't read Terminal: ${err:-unknown error}" "bring a Terminal window to the front and rerun; Terminal is read through Accessibility (TAB_TERM_READER=1 for the old reader)"
     fi
 fi
 
