@@ -13,6 +13,7 @@ private final class FakeShell: InputTapDelegate {
     func tapBlockedPress(_ g: Ghost) { calls.append("shake \(g.id)") }
     func tapOtherInput(kind: String, report: Bool) { calls.append(report ? "input \(kind)" : "hide only") }
     func tapHoldProgress(started: Bool) {}
+    func tapObserved(kind: RawInput.Kind, keyCode: Int64, flags: CGEventFlags, chars: String, location: CGPoint, ts: Double) {}
 }
 
 func runTapSelftest() -> Never {

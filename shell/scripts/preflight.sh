@@ -559,16 +559,16 @@ if [ ! -f "$ENV" ]; then
     if [ -n "$(env_get "$REPO/web/.env" PAYER_PRIVATE_KEY)$(env_get "$REPO/web/.env" TEMPO_PAYER_PRIVATE_KEY)" ]; then
         fail "the keys are in web/.env, but web, brain and the demo server read the repo-root .env" "mv web/.env .env"
     else
-        fail "no .env at the repo root: flows 1 and 4 can't pay, and the model has no key" "cp .env.example .env and fill it in (PAY_RAIL, the funded payer's key, JEV_API_KEY, …)"
+        fail "no .env at the repo root: flows 1 and 4 can't pay, and the model has no key" "cp .env.example .env and fill it in (PAY_RAIL, the funded payer's key, …)"
     fi
 else
     missing=""
     [ -z "$(env_get "$ENV" GITHUB_DEMO_REPO)" ] && missing="$missing GITHUB_DEMO_REPO"
-    [ -z "$(env_get "$ENV" JEV_API_KEY)$(env_get "$ENV" ANTHROPIC_API_KEY)" ] && missing="$missing JEV_API_KEY"
+    [ -f "$HOME/.tab/models/Qwen3-1.7B-Q4_K_M.gguf" ] || missing="$missing (local model ~/.tab/models/Qwen3-1.7B-Q4_K_M.gguf, see README)"
     if [ -n "$missing" ]; then
         fail ".env lacks:$missing" "fill them in (see .env.example), then restart the hub and web"
     else
-        ok ".env has the model key and the demo repo"
+        ok ".env has the demo repo, and the local model is downloaded"
     fi
 fi
 

@@ -22,6 +22,8 @@ protocol InputTapDelegate: AnyObject {
     /// Any other real input: hide the ghost; tell the hub only if `report` (never for secure typing).
     func tapOtherInput(kind: String, report: Bool)
     func tapHoldProgress(started: Bool)
+    /// Every reportable real input with its details, for the action recorder (ActionObserver).
+    func tapObserved(kind: RawInput.Kind, keyCode: Int64, flags: CGEventFlags, chars: String, location: CGPoint, ts: Double)
 }
 
 final class InputTap {
@@ -102,7 +104,12 @@ final class InputTap {
             }
             // Typing in a secure field (a password) still hides the ghost, but nothing about it leaves this process.
             let secure = IsSecureEventInputEnabled()
-            DispatchQueue.main.async { d.tapOtherInput(kind: "key", report: !secure) }
+            let chars = secure ? "" : unicode(event)
+            let flags = event.flags, ts = nowMs()
+            DispatchQueue.main.async {
+                d.tapOtherInput(kind: "key", report: !secure)
+                if !secure { d.tapObserved(kind: .key, keyCode: code, flags: flags, chars: chars, location: .zero, ts: ts) }
+            }
             return Unmanaged.passUnretained(event)
 
         case .keyUp:
@@ -134,7 +141,11 @@ final class InputTap {
         case .leftMouseDown:
             let loc = event.location
             if d.ownRects.contains(where: { $0.contains(loc) }) { return Unmanaged.passUnretained(event) }
-            DispatchQueue.main.async { d.tapOtherInput(kind: "click", report: true) }
+            let ts = nowMs()
+            DispatchQueue.main.async {
+                d.tapOtherInput(kind: "click", report: true)
+                d.tapObserved(kind: .click, keyCode: 0, flags: [], chars: "", location: loc, ts: ts)
+            }
             return Unmanaged.passUnretained(event)
 
         default:
@@ -158,6 +169,13 @@ final class InputTap {
         delegate?.tapHoldProgress(started: false)
         delegate?.tapDismiss(p.ghost)
     }
+}
+
+private func unicode(_ e: CGEvent) -> String {
+    var len = 0
+    var buf = [UniChar](repeating: 0, count: 8)
+    e.keyboardGetUnicodeString(maxStringLength: 8, actualStringLength: &len, unicodeString: &buf)
+    return String(utf16CodeUnits: buf, count: len)
 }
 
 private func inputTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {

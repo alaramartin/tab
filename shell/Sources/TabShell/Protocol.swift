@@ -26,17 +26,48 @@ struct El: Codable, Equatable {
     var enabled: Bool
     var path: String?
     var list: ListRef?
+    // v2 (AXSensor), all optional
+    var section: String? = nil // nearest labelled container: "Shipping address"
+    var axId: String? = nil
+    var placeholder: String? = nil
+    var help: String? = nil
+    var focused: Bool? = nil
+    var secure: Bool? = nil // password field: never carries a value
+    var grid: GridRef? = nil
+    var caret: Rect? = nil // insertion point of the focused text field
+}
+
+struct GridRef: Codable, Equatable {
+    var row: Int
+    var col: Int?
 }
 
 struct ScreenState: Codable {
     var type = "state"
-    var source: String // "native" | "web"
+    var source: String // "native" (Terminal) | "ax" (any app) | "web"
     var app: String
     var window: String
     var url: String?
     var focused: Bool
     var elements: [El]
     var seq: Int
+    var ts: Double
+    var nodes: Int? = nil // AX nodes walked (diagnostics)
+    var vision: Bool? = nil // some elements were read from pixels (OCR), paths "ocr:…"
+}
+
+/// An action the user took in any app, resolved to the element it hit (ActionObserver).
+struct UserEvent: Codable {
+    var type = "user_event"
+    var source = "native"
+    var app: String
+    var window: String?
+    var url: String?
+    var kind: String // "click" | "type" | "key"
+    var target: El?
+    var value: String?
+    var before: String? // type: the field's value before the edit (partial: the text just before the insertion)
+    var partial: Bool? = nil // type in a long text: `value` is only the inserted span
     var ts: Double
 }
 
@@ -96,16 +127,19 @@ struct Hud: Codable, Equatable {
     var lastTx: LastTx?
 }
 
+struct IconLabel: Codable { var hash: String; var label: String }
+
 // MARK: - hub → A
 
 enum HubToShell: Decodable {
     case ghost(Ghost)
     case ghostHide
+    case iconLabels([IconLabel])
     case exec(ghostId: String, action: Action)
     case hud(Hud)
     case unknown(String)
 
-    private enum K: String, CodingKey { case type, ghost, ghostId, action, hud }
+    private enum K: String, CodingKey { case type, ghost, ghostId, action, hud, items }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -113,6 +147,7 @@ enum HubToShell: Decodable {
         switch type {
         case "ghost": self = .ghost(try c.decode(Ghost.self, forKey: .ghost))
         case "ghost_hide": self = .ghostHide
+        case "icon_labels": self = .iconLabels(try c.decode([IconLabel].self, forKey: .items))
         case "exec": self = .exec(ghostId: try c.decode(String.self, forKey: .ghostId), action: try c.decode(Action.self, forKey: .action))
         case "hud": self = .hud(try c.decode(Hud.self, forKey: .hud))
         default: self = .unknown(type)
@@ -126,16 +161,19 @@ enum ShellToHub: Encodable {
     case hello
     case frontmost(app: String, window: String)
     case state(ScreenState)
+    case userEvent(UserEvent)
+    case iconRequest([IconLabeler.Request])
     case input(kind: String) // "key" | "click"
     case accept(ghostId: String)
     case dismiss(ghostId: String)
     case execResult(ghostId: String, ok: Bool, error: String?)
     case hudClick(item: String) // "ledger" | "contrast"
 
-    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item }
+    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items }
 
     func encode(to encoder: Encoder) throws {
         if case .state(let s) = self { return try s.encode(to: encoder) }
+        if case .userEvent(let e) = self { return try e.encode(to: encoder) }
         var c = encoder.container(keyedBy: K.self)
         switch self {
         case .hello:
@@ -145,7 +183,10 @@ enum ShellToHub: Encodable {
             try c.encode("frontmost", forKey: .type)
             try c.encode(app, forKey: .app)
             try c.encode(window, forKey: .window)
-        case .state: break
+        case .state, .userEvent: break
+        case .iconRequest(let items):
+            try c.encode("icon_request", forKey: .type)
+            try c.encode(items, forKey: .items)
         case .input(let kind):
             try c.encode("input", forKey: .type)
             try c.encode(kind, forKey: .kind)

@@ -76,6 +76,7 @@ enum NativeApp {
     }
 
     static func element(pid: pid_t, path want: String) -> AXUIElement? {
+        if let el = AXSensor.element(pid: pid, path: want) { return el } // the generic path every AX snapshot uses
         var found: AXUIElement?
         controls(pid: pid) { el, _, p in
             if p == want { found = el; return false }
@@ -172,54 +173,6 @@ enum NativeApp {
                 e.postToPid(pid)
             }
             usleep(8_000)
-        }
-    }
-}
-
-/// Polls the frontmost allow-listed native app every 400 ms and reports its controls when they change.
-final class NativePoller {
-    private let queue = DispatchQueue(label: "tab.native")
-    private var timer: DispatchSourceTimer?
-    private var last: String?
-    private var seq = 0
-    private var target: (pid: pid_t, bundleId: String)?
-    var onState: ((ScreenState) -> Void)?
-
-    func setFrontmost(_ app: NSRunningApplication?) {
-        let t: (pid_t, String)? = app.flatMap { a in a.bundleIdentifier.flatMap { nativeApps.contains($0) ? (a.processIdentifier, $0) : nil } }
-        queue.async {
-            self.target = t.map { (pid: $0.0, bundleId: $0.1) }
-            self.last = nil
-        }
-        if t != nil, timer == nil {
-            let tm = DispatchSource.makeTimerSource(queue: queue)
-            tm.schedule(deadline: .now(), repeating: .milliseconds(400), leeway: .milliseconds(40))
-            tm.setEventHandler { [weak self] in self?.tick() }
-            tm.resume()
-            timer = tm
-        }
-    }
-
-    private func tick() {
-        guard let target, AXIsProcessTrusted() else { return }
-        seq += 1
-        guard let st = NativeApp.state(pid: target.pid, bundleId: target.bundleId, seq: seq) else { return }
-        let sig = st.elements.map { "\($0.id)|\($0.value ?? "")|\($0.rect.x),\($0.rect.y)" }.joined(separator: "\n")
-        if sig == last { return }
-        last = sig
-        DispatchQueue.main.async { self.onState?(st) }
-    }
-
-    /// Run a native step for `bundleId` on the poller's queue (AX waits on the other app).
-    func exec(_ a: Action, done: @escaping (String?) -> Void) {
-        queue.async {
-            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: a.app).first else {
-                DispatchQueue.main.async { done("\(a.app) not running") }
-                return
-            }
-            let err = NativeApp.exec(a, pid: app.processIdentifier)
-            self.last = nil // report the new screen
-            DispatchQueue.main.async { done(err) }
         }
     }
 }

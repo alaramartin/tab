@@ -6,6 +6,11 @@
 //   TabShell --render-reveal out.png   the end-of-demo reveal card, offscreen
 //   TabShell --render out.png      render the selftest ghosts offscreen to a PNG (no permissions needed); --bg img.png, --dark,
 //                                  --size WxH (points), --ghosts file.json ([{ghost, hc}] instead of the selftest layout)
+//   TabShell --ax-dump [bundleId]  print the frontmost (or given) app's AX snapshot as JSON
+//   TabShell --ax-bench [bundleId] [N]  time N snapshots: p50/p95/max, element counts by role
+//   TabShell --exec '<Action JSON>'  run one action via the Actuator (click / type / key / navigate)
+//   TabShell --testbed             a native test window (form + table) for end-to-end tests; touches no user app
+//   TabShell --ocr [bundleId]      read the app's window text with Vision (vision fallback; needs Screen Recording)
 //   flags: --high-contrast, --hub ws://host:port
 import AppKit
 import ApplicationServices
@@ -48,6 +53,65 @@ if args.contains("--dump") {
     exit(report["ok"] as? Bool == true ? 0 : 1)
 }
 
+// MARK: - --ax-dump / --ax-bench [bundleId] [N]: read any app's focused window
+
+if args.contains("--ax-dump") || args.contains("--ax-bench") {
+    let bench = args.contains("--ax-bench")
+    let flag = bench ? "--ax-bench" : "--ax-dump"
+    let want = flagValue(flag).flatMap { $0.hasPrefix("--") || Int($0) != nil ? nil : $0 }
+    let n = args.last.flatMap { Int($0) } ?? (bench ? 20 : 1)
+    guard AXIsProcessTrusted() else { print("ax: not trusted (grant Accessibility to this binary's host)"); exit(1) }
+    let app = want.flatMap(runningApp) ?? NSWorkspace.shared.frontmostApplication
+    guard let app, let bid = appId(app) else { print("no app"); exit(1) }
+    AXSensor.enableTree(pid: app.processIdentifier, bundleId: bid)
+    var times: [Double] = []
+    var last: ScreenState?
+    for i in 0..<n {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        last = AXSensor.state(pid: app.processIdentifier, bundleId: bid, seq: i)
+        times.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+    }
+    if bench {
+        let s = times.sorted()
+        let roles = Dictionary(grouping: last?.elements ?? [], by: { $0.role }).mapValues(\.count).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        print(String(format: "%@  snapshot p50 %.1f ms  p95 %.1f ms  max %.1f ms  · %d elements (%d AX nodes) · %@", bid,
+                     s[s.count / 2], s[min(s.count - 1, Int(Double(s.count) * 0.95))], s.last!, last?.elements.count ?? 0, last?.nodes ?? 0,
+                     roles.joined(separator: " ")))
+    } else {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        print(String(decoding: try! enc.encode(last.map { [$0] } ?? []), as: UTF8.self))
+    }
+    exit(0)
+}
+
+// MARK: - --ocr [bundleId]: read the app's window through Vision (needs Screen Recording)
+
+if let want = flagValue("--ocr") ?? (args.contains("--ocr") ? "" : nil) {
+    let app = want.isEmpty ? NSWorkspace.shared.frontmostApplication : runningApp(want)
+    guard let app else { print("no app"); exit(1) }
+    print("screen recording permitted: \(VisionSensor.permitted)")
+    _ = VisionSensor.elements(pid: app.processIdentifier) // first call lists windows; the second shows the steady state
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let els = VisionSensor.elements(pid: app.processIdentifier)
+    print(String(format: "%d text elements in %.0f ms (capture %.0f ms, recognise %.0f ms)", els.count, (CFAbsoluteTimeGetCurrent() - t0) * 1000,
+                 VisionSensor.lastTiming?.captureMs ?? 0, VisionSensor.lastTiming?.recogniseMs ?? 0))
+    for e in els.prefix(40) { print("  \(e.role.padding(toLength: 6, withPad: " ", startingAt: 0)) \(Int(e.rect.x)),\(Int(e.rect.y)) \(Int(e.rect.w))×\(Int(e.rect.h))  \(e.label)") }
+    exit(0)
+}
+
+// MARK: - --exec '<Action JSON>': run one action through the Actuator (testing; the app is the action's `app`)
+
+if let json = flagValue("--exec") {
+    guard AXIsProcessTrusted() else { print("ax: not trusted"); exit(1) }
+    let a = try! JSONDecoder().decode(Action.self, from: Data(json.utf8))
+    guard let app = runningApp(a.app) else { print("\(a.app) not running"); exit(1) }
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let err = Actuator.exec(a, pid: app.processIdentifier)
+    print(String(format: "%@ in %.0f ms", err ?? "ok", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
+    exit(err == nil ? 0 : 1)
+}
+
 // MARK: - App
 
 final class Shell: NSObject, InputTapDelegate {
@@ -58,7 +122,8 @@ final class Shell: NSObject, InputTapDelegate {
     let tap = InputTap()
     let hub: HubClient
     let terminal = TerminalPoller()
-    let native = NativePoller() // STRETCH: Calendar (branch stretch/calendar-native)
+    let ax = AXPoller() // any frontmost app, via Accessibility
+    lazy var actions = ActionObserver(ax: ax)
     private var lastHud = Hud()
     private var statusItem: NSStatusItem?
     private var showHudItem: NSMenuItem?
@@ -85,7 +150,14 @@ final class Shell: NSObject, InputTapDelegate {
             self?.overlay.hide()
         }
         terminal.onState = { [weak self] s in self?.hub.send(.state(s)) }
-        native.onState = { [weak self] s in self?.hub.send(.state(s)) }
+        // Terminal is read through AX like any app (its text area's value is kept around the insertion point, i.e.
+        // the latest output). The dedicated TerminalReader (40 lines, session-log fallback) is opt-in.
+        let termReader = ProcessInfo.processInfo.environment["TAB_TERM_READER"] != nil
+        ax.skip = termReader ? terminalApps : []
+        if !termReader { terminal.onState = nil }
+        ax.onState = { [weak self] s in self?.hub.send(.state(s)) }
+        ax.onIconRequest = { [weak self] items in self?.hub.send(.iconRequest(items)) }
+        actions.onEvent = { [weak self] e in self?.hub.send(.userEvent(e)) }
     }
 
     func start() {
@@ -96,7 +168,7 @@ final class Shell: NSObject, InputTapDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appActivated(_:)),
                                                           name: NSWorkspace.didActivateApplicationNotification, object: nil)
         terminal.setFrontmost(NSWorkspace.shared.frontmostApplication)
-        native.setFrontmost(NSWorkspace.shared.frontmostApplication)
+        ax.setFrontmost(NSWorkspace.shared.frontmostApplication)
         hub.start()
         setUpMenuBar()
         // Re-place the HUD only when displays change; a polling re-place would snap it back mid-drag.
@@ -175,9 +247,9 @@ final class Shell: NSObject, InputTapDelegate {
     }
 
     private func reportFrontmost(_ app: NSRunningApplication?) {
-        guard let app, let bid = app.bundleIdentifier, bid != selfBundleId else { return }
+        guard let app, let bid = appId(app), bid != selfBundleId else { return }
         terminal.setFrontmost(app)
-        native.setFrontmost(app)
+        ax.setFrontmost(app)
         // The window title is an AX round trip to another app; the tap shares the main run loop, so never block it.
         let pid = app.processIdentifier
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -208,6 +280,10 @@ final class Shell: NSObject, InputTapDelegate {
         case .ghostHide:
             log("ghost_hide")
             overlay.hide()
+        case .iconLabels(let items):
+            IconLabeler.store(items.map { (hash: $0.hash, label: $0.label) })
+            log("icons named: \(items.map { $0.label.isEmpty ? "?" : $0.label }.joined(separator: ", "))")
+            ax.invalidate()
         case .hud(let h):
             lastHud = h
             hud.update(h)
@@ -219,11 +295,18 @@ final class Shell: NSObject, InputTapDelegate {
     }
 
     private func exec(_ ghostId: String, _ a: Action) {
-        if a.op != "switch_app", nativeApps.contains(a.app) {
-            // STRETCH: a step inside Calendar (click / type / choose / key) via Accessibility.
-            native.exec(a) { [weak self] err in
-                log("exec \(ghostId): native \(a.op) \(a.targetPath ?? a.value ?? "") → \(err ?? "ok")")
-                self?.hub.send(.execResult(ghostId: ghostId, ok: err == nil, error: err))
+        if a.op != "switch_app" {
+            // Any app: click / type / key via Accessibility and synthetic input.
+            ax.async { [weak self] in
+                let err: String?
+                if let app = runningApp(a.app) {
+                    err = Actuator.exec(a, pid: app.processIdentifier)
+                } else { err = "\(a.app) not running" }
+                self?.ax.invalidate() // report the new screen
+                DispatchQueue.main.async {
+                    log("exec \(ghostId): \(a.op) \(a.targetPath ?? a.value ?? "") → \(err ?? "ok")")
+                    self?.hub.send(.execResult(ghostId: ghostId, ok: err == nil, error: err))
+                }
             }
             return
         }
@@ -287,6 +370,13 @@ final class Shell: NSObject, InputTapDelegate {
 
     func tapHoldProgress(started: Bool) {
         if started { overlay.startHold(ms: holdDismissMs) } else { overlay.stopHold() }
+    }
+
+    func tapObserved(kind: RawInput.Kind, keyCode: Int64, flags: CGEventFlags, chars: String, location: CGPoint, ts: Double) {
+        guard let app = NSWorkspace.shared.frontmostApplication, let bid = appId(app) else { return }
+        if kind == .click, ownRects.contains(where: { $0.contains(location) }) { return }
+        actions.observe(RawInput(kind: kind, keyCode: keyCode, flags: flags, chars: chars, location: location,
+                                 pid: app.processIdentifier, bundleId: bid, ts: ts))
     }
 }
 
@@ -534,7 +624,13 @@ let highContrast = args.contains("--high-contrast")
 var shell: Shell?
 var selftestOverlay: Overlay?
 
-if args.contains("--selftest") {
+var testbed: Testbed?
+var canvasTestbed: CanvasTestbed?
+if args.contains("--testbed") {
+    app.setActivationPolicy(.regular)
+    if args.contains("--canvas") { canvasTestbed = CanvasTestbed() } else { testbed = Testbed() }
+    log("testbed: window open")
+} else if args.contains("--selftest") {
     let o = Overlay(highContrast: highContrast)
     o.showAll(selftestGhosts(screen: NSScreen.screens.first!.frame.size))
     selftestOverlay = o
@@ -543,6 +639,7 @@ if args.contains("--selftest") {
     let url = URL(string: flagValue("--hub") ?? "ws://127.0.0.1:\(ProcessInfo.processInfo.environment["HUB_PORT"] ?? "7800")")!
     shell = Shell(hubURL: url, highContrast: highContrast)
     shell!.start()
+    log("vision: screen recording \(VisionSensor.permitted ? "granted: windows with little Accessibility are read with OCR" : "not granted: the OCR fallback is off (System Settings → Privacy & Security → Screen Recording → TabShell)")")
     log("TabShell running · hub \(url)")
 }
 

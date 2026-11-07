@@ -9,6 +9,13 @@ export type Role =
     | "select"
     | "checkbox"
     | "text"
+    // v2, from AXSensor (any app)
+    | "cell"
+    | "row"
+    | "menuitem"
+    | "tab"
+    | "slider"
+    | "image"
     | "other";
 
 export interface El {
@@ -23,11 +30,20 @@ export interface El {
     path?: string; // CSS path for web. Replays resolve targets by path.
     radius?: number; // web: corner radius in points (CSS border-radius, top-left), at most min(w, h) / 2; 0 = square
     list?: { key: string; index: number; field?: string }; // item in a repeated structure; field = path relative to the item
+    // v2 (AXSensor, any app); all optional
+    section?: string; // nearest labelled container, e.g. "Shipping address"
+    axId?: string; // AXIdentifier
+    placeholder?: string;
+    help?: string;
+    focused?: boolean;
+    secure?: boolean; // password field: never carries a value
+    grid?: { row: number; col?: number }; // table cell / row position
+    caret?: Rect; // insertion point of the focused text field
 }
 
 export interface ScreenState {
     type: "state";
-    source: "native" | "web";
+    source: "native" | "web" | "ax"; // native = Terminal reader; ax = any app via Accessibility (v2)
     app: string; // bundle id: 'com.google.Chrome' for web, e.g. 'com.apple.Terminal' for native
     window: string;
     url?: string;
@@ -35,17 +51,21 @@ export interface ScreenState {
     elements: El[]; // visible only, ≤ 200, interactive first, then text
     seq: number; // monotonic per source
     ts: number;
+    nodes?: number; // ax: AX nodes walked (diagnostics)
 }
 
 export interface UserEvent {
-    // web only (C). A reports native input as anonymous `input` messages.
+    // web (C) or native (A's ActionObserver, any app). A also sends anonymous `input` messages for the HUD counters.
     type: "user_event";
-    source: "web";
+    source: "web" | "native";
     app: string;
-    url: string;
+    url?: string;
+    window?: string; // native
     kind: "click" | "type" | "key" | "focus" | "navigate";
     target?: El;
-    value?: string; // committed text or selected option label, key name, or url
+    value?: string; // committed text or selected option label, key name ("cmd+s", "Return"), or url
+    before?: string; // native type: the field's value before the edit (partial: the ≤120 chars just before the insertion)
+    partial?: boolean; // native type in a long text (> 280 chars): `value` is only the inserted span
     ts: number;
 }
 
@@ -122,7 +142,8 @@ export type AppId = string; // bundle id
 export type ShellToHub =
     | { type: "hello"; role: "shell" }
     | { type: "frontmost"; app: AppId; window: string }
-    | ScreenState // native, Terminal only
+    | ScreenState // native (Terminal) or ax (any app)
+    | UserEvent // native: resolved actions in any app
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }
     | { type: "dismiss"; ghostId: string }
