@@ -9,7 +9,8 @@
 //   TabShell --ax-bench [bundleId] [N]  time N snapshots: p50/p95/max, element counts by role
 //   TabShell --exec '<Action JSON>'  run one action via the Actuator (click / type / key / navigate)
 //   TabShell --testbed             a native test window (form + table) for end-to-end tests; touches no user app
-//   TabShell --ocr [bundleId]      read the app's window text with Vision (vision fallback; needs Screen Recording)
+//   TabShell --ocr [bundleId]      read the app's window text and icons with Vision (vision fallback; needs Screen Recording)
+//   TabShell --vision-selftest     read a drawn window image offscreen: text, icon boxes, cached names (no permissions needed)
 //   flags: --high-contrast, --hub ws://host:port
 import AppKit
 import ApplicationServices
@@ -64,8 +65,8 @@ if let want = flagValue("--ocr") ?? (args.contains("--ocr") ? "" : nil) {
     _ = VisionSensor.elements(pid: app.processIdentifier) // first call lists windows; the second shows the steady state
     let t0 = CFAbsoluteTimeGetCurrent()
     let els = VisionSensor.elements(pid: app.processIdentifier)
-    print(String(format: "%d text elements in %.0f ms (capture %.0f ms, recognise %.0f ms)", els.count, (CFAbsoluteTimeGetCurrent() - t0) * 1000,
-                 VisionSensor.lastTiming?.captureMs ?? 0, VisionSensor.lastTiming?.recogniseMs ?? 0))
+    print(String(format: "%d elements in %.0f ms (capture %.0f ms, text %.0f ms, icons %.0f ms)", els.count, (CFAbsoluteTimeGetCurrent() - t0) * 1000,
+                 VisionSensor.lastTiming?.captureMs ?? 0, VisionSensor.lastTiming?.recogniseMs ?? 0, VisionSensor.lastTiming?.objectsMs ?? 0))
     for e in els.prefix(40) { print("  \(e.role.padding(toLength: 6, withPad: " ", startingAt: 0)) \(Int(e.rect.x)),\(Int(e.rect.y)) \(Int(e.rect.w))×\(Int(e.rect.h))  \(e.label)") }
     exit(0)
 }
@@ -536,6 +537,7 @@ func renderHUD(to out: String) {
 // MARK: - main
 
 if args.contains("--tap-selftest") { runTapSelftest() }
+if args.contains("--vision-selftest") { runVisionSelftest() }
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

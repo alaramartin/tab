@@ -546,7 +546,7 @@ final class AXPoller {
         // Icon-only controls get names from the vision model (cached by image hash; unknown ones go to the hub).
         let iconReqs = IconLabeler.apply(&st, pid: target.pid)
         if !iconReqs.isEmpty { DispatchQueue.main.async { self.onIconRequest?(iconReqs) } }
-        // Little to read through AX (canvas, CEF, games): read the window's text instead. OCR runs on its own queue
+        // Little to read through AX (canvas, CEF, games): read the window's text and icons instead. OCR runs on its own queue
         // (it takes a few hundred ms); this snapshot carries the last result, and a fresh one triggers a new snapshot.
         if VisionSensor.permitted, let w = AX.focusedWindow(pid: target.pid), VisionSensor.poor(st, window: AX.frame(w)) {
             let now = CFAbsoluteTimeGetCurrent()
@@ -560,6 +560,8 @@ final class AXPoller {
                 ocrQueue.async {
                     let t0 = CFAbsoluteTimeGetCurrent()
                     let els = VisionSensor.elements(pid: pid)
+                    let reqs = VisionSensor.takeIconRequests()
+                    if !reqs.isEmpty { DispatchQueue.main.async { self.onIconRequest?(reqs) } }
                     if debugEnabled {
                         log(String(format: "ocr: %d elements in %.0f ms (pid %d)", els.count, (CFAbsoluteTimeGetCurrent() - t0) * 1000, pid))
                     }

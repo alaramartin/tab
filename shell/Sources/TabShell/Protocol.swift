@@ -50,7 +50,7 @@ struct ScreenState: Codable {
     var seq: Int
     var ts: Double
     var nodes: Int? = nil // AX nodes walked (diagnostics)
-    var vision: Bool? = nil // some elements were read from pixels (OCR), paths "ocr:…"
+    var vision: Bool? = nil // some elements were read from pixels: text (paths "ocr:…") and icons (paths "vis:…")
 }
 
 /// An action the user took in any app, resolved to the element it hit (ActionObserver).

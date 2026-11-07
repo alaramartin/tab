@@ -17,11 +17,11 @@ enum Actuator {
         case "key":
             return key(a.value ?? "Return", pid: pid)
         case "click":
-            if let p = a.targetPath, p.hasPrefix("ocr:") { return clickOCR(p, pid: pid) }
+            if let p = a.targetPath, VisionSensor.isPixelPath(p) { return clickOCR(p, pid: pid) }
             guard let el = waitElement(pid: pid, path: a.targetPath) else { return "target not found: \(a.targetPath ?? "-")" }
             return click(el)
         case "type":
-            if let p = a.targetPath, p.hasPrefix("ocr:") {
+            if let p = a.targetPath, VisionSensor.isPixelPath(p) {
                 if let err = clickOCR(p, pid: pid) { return err }
                 usleep(150_000)
                 if (a.value ?? "").count > 40 { paste(a.value ?? "", pid: pid) } else { typeKeys(a.value ?? "", pid: pid) }
@@ -46,11 +46,11 @@ enum Actuator {
         }
     }
 
-    /// A target read from pixels: click the centre of where its text was last seen (re-read the window if unknown).
+    /// A target read from pixels: click the centre of where it was last seen (re-read the window if unknown).
     static func clickOCR(_ path: String, pid: pid_t) -> String? {
         var r = VisionSensor.rect(for: path)
         if r == nil { _ = VisionSensor.elements(pid: pid); r = VisionSensor.rect(for: path) }
-        guard let r else { return "text \(path.dropFirst(4)) not on screen" }
+        guard let r else { return "\(path) not on screen" }
         mouseClick(at: CGPoint(x: r.x + r.w / 2, y: r.y + r.h / 2))
         return nil
     }
