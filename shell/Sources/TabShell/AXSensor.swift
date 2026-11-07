@@ -486,20 +486,23 @@ final class AXPoller {
     private var lastState: ScreenState?
     private var lastRefs: [AXUIElement] = []
 
-    /// Typing in a big window: the notification names the element whose value changed. If the last snapshot has it,
-    /// patch its value and caret (~1 ms) and send that right away; a full walk follows 300 ms later for anything
-    /// structural (a suggestion list appearing). Everything else takes the normal path.
+    /// A value change names its element (typing, a checkbox, a slider, a popup). If the last snapshot has it, rebuild
+    /// just that element the way a full walk would (~1 ms) and send the patched snapshot right away; a full walk
+    /// follows 300 ms later for anything structural (a suggestion list appearing, a radio group's other buttons).
     func changed(_ el: AXUIElement, _ note: String) {
         guard note == kAXValueChangedNotification || note == kAXSelectedTextChangedNotification else { return changed() }
         queue.async {
             guard var st = self.lastState, let i = self.lastRefs.firstIndex(where: { CFEqual($0, el) }), i < st.elements.count else { return self.changed() }
-            let info = AXInfo(el)
-            // Only typing is patched; a checkbox, a slider or a selection change takes the normal (fast) full path.
-            guard ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(info.role), !AXSensor.isSecure(info) else { return self.changed() }
-            if let v = info.stringValue {
-                st.elements[i].value = v.count <= 2000 ? v : AXSensor.window(of: v, around: info.focused ? AXSensor.caretOffset(el) : nil)
-            }
-            if st.elements[i].focused == true { st.elements[i].caret = AXSensor.caret(el) }
+            let old = st.elements[i]
+            // Its place in the tree stays what the last walk found: path, section, table cell, list item.
+            let node = AXSensor.Node(el: el, info: AXInfo(el), path: old.path ?? old.id, section: old.section, depth: 0, cell: old.grid,
+                                     item: old.list.map { AXSensor.ListPos(key: $0.key, index: $0.index) })
+            guard var e = AXSensor.makeEl(node, includeText: true), e.role == old.role else { return self.changed() }
+            e.id = old.id
+            e.list = old.list
+            e.grid = old.grid ?? e.grid
+            if e == old { return self.fullSoon() } // nothing changed here; the walk still checks around it
+            st.elements[i] = e
             self.seq += 1
             st.seq = self.seq
             st.ts = nowMs()
