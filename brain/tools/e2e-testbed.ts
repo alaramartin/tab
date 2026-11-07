@@ -51,7 +51,7 @@ const hubLog = join(dir, "hub.log");
 // Habits only (TAB_MODEL=""): the loop under test is perception → memory → habit → ghost → Tab → exec.
 const hub = spawn("node", ["--import", "tsx", "src/hub.ts"], {
     cwd: join(ROOT, "brain"),
-    env: { ...process.env, TAB_MEMORY_FILE: dbFile, TAB_MODEL: process.env.E2E_MODEL ?? "", TAB_LADDER_FILE: join(dir, "ladder.json"), ANTHROPIC_API_KEY: "" },
+    env: { ...process.env, TAB_TRACE: "1", TAB_MEMORY_FILE: dbFile, TAB_MODEL: process.env.E2E_MODEL ?? "", TAB_LADDER_FILE: join(dir, "ladder.json"), ANTHROPIC_API_KEY: "" },
     stdio: ["ignore", openSync(hubLog, "a"), openSync(hubLog, "a")],
 });
 const testbed = spawn(SHELL, ["--testbed", "--signup"], { stdio: "ignore" });
@@ -138,13 +138,23 @@ try {
         click(submitBtn);
         await sleep(700);
     }
+    const tMark = Date.now();
     click(subscribe);
-    let ghost = "";
-    for (let i = 0; i < 20 && !ghost; i++) {
-        await sleep(150);
-        ghost = readFileSync(hubLog, "utf8").split("\n").filter((l) => l.includes('"type":"ghost"') && l.includes("Submit")).at(-1) ?? "";
+    // Wait for a ghost sent after this click (not one from the repetitions), and time it as the hub sees it.
+    const traceSince = () => readFileSync(hubLog, "utf8").split("\n").filter((l) => l.startsWith("[trace]") && Number(l.split(" ")[1]) >= tMark);
+    let tIn = NaN, tOut = NaN;
+    for (let i = 0; i < 80 && Number.isNaN(tOut); i++) {
+        await sleep(25);
+        const tr = traceSince();
+        const iIn = tr.findIndex((l) => l.includes("← shell input click"));
+        if (iIn < 0) continue;
+        tIn = Number(tr[iIn].split(" ")[1]);
+        const out = tr.slice(iIn + 1).find((l) => / → shell ghost$/.test(l));
+        if (out) tOut = Number(out.split(" ")[1]);
     }
-    check(!!ghost, `after 4 × (Subscribe, Submit), ticking Subscribe brings a "Click Submit" ghost`);
+    const ghostLine = readFileSync(hubLog, "utf8").split("\n").filter((l) => l.startsWith('→ shell {"type":"ghost"')).at(-1) ?? "";
+    const ghost = !Number.isNaN(tOut) && ghostLine.includes("Submit") ? ghostLine : "";
+    check(!!ghost, `after 4 × (Subscribe, Submit), ticking Subscribe brings a "Click Submit" ghost, ${tOut - tIn} ms after the click`);
     const statusBefore = dump().find((e) => e.role === "text" && e.label.startsWith("Submitted"))?.label;
     await sleep(1600); // the testbed's status shows seconds; let it tick so a new submit is visible
     key(48); // a real Tab press: TabShell's tap accepts the ghost

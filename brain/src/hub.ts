@@ -21,6 +21,7 @@ function out(to: "shell" | "web", m: HubToShell | HubToWeb): void {
     const ws = to === "shell" ? shell : web;
     if (ws && ws.readyState === ws.OPEN) ws.send(s);
     for (const t of tools) if (t.readyState === t.OPEN) t.send(JSON.stringify({ to, msg: m }));
+    if (process.env.TAB_TRACE && m.type !== "hud") console.log(`[trace] ${Date.now()} → ${to} ${m.type}`);
     if (m.type !== "hud") console.log(`→ ${to} ${s.length > 200 ? s.slice(0, 200) + "…" : s}`);
 }
 
@@ -91,6 +92,7 @@ wss.on("connection", (ws) => {
         }
         if (role === "tool" && (m.to === "shell" || m.to === "web") && m.msg) return out(m.to, m.msg);
         if (m.type === "input" || m.type === "user_event") lastActivity = Date.now();
+        if (process.env.TAB_TRACE) console.log(`[trace] ${Date.now()} ← ${role} ${m.type}${m.kind ? ` ${m.kind}` : ""}${m.type === "state" ? ` ${m.app} ${m.elements?.length} els` : ""}`);
         if (role === "tool" && m.type === "reset") {
             brain.reset(!!m.keepWorkflows); // web/scripts/reset-demo.ts: history, units, counters; saved workflows unless kept
             return console.log(`hub: reset${m.keepWorkflows ? " (kept workflows)" : ""}`);

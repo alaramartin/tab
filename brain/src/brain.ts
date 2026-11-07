@@ -12,7 +12,7 @@ import type { Memory } from "./memory/store.ts";
 /** STRETCH: native steps take this many times as long, so the audience can follow (human's call: 10% slower). */
 const NATIVE_PACE = Number(process.env.TAB_NATIVE_PACE ?? 1.1);
 
-const DEBOUNCE_MS = 150;
+const DEBOUNCE_MS = Number(process.env.TAB_DEBOUNCE_MS ?? 40); // fast tiers take ~1 ms: predict as soon as a screen settles
 const IDLE_MS = 600; // model ghosts wait for this much quiet
 const SHOW_AT = 0.6;
 const EXEC_TIMEOUT_MS = 3000;

@@ -379,13 +379,17 @@ final class AXPoller {
         changed()
     }
 
-    /// Coalesce bursts of notifications (typing posts one per key) into one snapshot ~100 ms later.
+    private var lastTick: CFAbsoluteTime = 0
+
+    /// Coalesce bursts of notifications (typing posts one per key) into one snapshot. The first change after a quiet
+    /// moment goes out after 30 ms (a click's result, fast); changes during a burst every 100 ms (CPU).
     func changed() {
         queue.async {
             if self.pending != nil { return }
-            let w = DispatchWorkItem { [weak self] in self?.pending = nil; self?.tick() }
+            let w = DispatchWorkItem { [weak self] in self?.pending = nil; self?.lastTick = CFAbsoluteTimeGetCurrent(); self?.tick() }
             self.pending = w
-            self.queue.asyncAfter(deadline: .now() + 0.1, execute: w)
+            let quiet = CFAbsoluteTimeGetCurrent() - self.lastTick > 0.3
+            self.queue.asyncAfter(deadline: .now() + (quiet ? 0.03 : 0.1), execute: w)
         }
     }
 
