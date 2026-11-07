@@ -17,18 +17,18 @@ enum Actuator {
             return key(a.value ?? "Return", pid: pid)
         case "click":
             if let p = a.targetPath, p.hasPrefix("ocr:") { return clickOCR(p, pid: pid) }
-            guard let el = NativeApp.waitElement(pid: pid, path: a.targetPath) else { return "target not found: \(a.targetPath ?? "-")" }
+            guard let el = waitElement(pid: pid, path: a.targetPath) else { return "target not found: \(a.targetPath ?? "-")" }
             return click(el)
         case "type":
             if let p = a.targetPath, p.hasPrefix("ocr:") {
                 if let err = clickOCR(p, pid: pid) { return err }
                 usleep(150_000)
-                if (a.value ?? "").count > 40 { paste(a.value ?? "", pid: pid) } else { NativeApp.type(a.value ?? "", pid: pid) }
+                if (a.value ?? "").count > 40 { paste(a.value ?? "", pid: pid) } else { typeKeys(a.value ?? "", pid: pid) }
                 return nil
             }
-            guard let el = NativeApp.waitElement(pid: pid, path: a.targetPath) else { return "target not found: \(a.targetPath ?? "-")" }
+            guard let el = waitElement(pid: pid, path: a.targetPath) else { return "target not found: \(a.targetPath ?? "-")" }
             if AX.role(el) == "AXPopUpButton" || AX.role(el) == "AXComboBox" && a.value.map({ !$0.isEmpty }) == true && AX.children(el).contains(where: { AX.role($0) == "AXList" }) {
-                if let err = NativeApp.choose(el, item: a.value ?? "") { return err }
+                if let err = choose(el, item: a.value ?? "") { return err }
                 // The menu applies the choice after it closes: return once the popup shows it (≤ 1 s).
                 for _ in 0..<20 {
                     if (AX.attr(el, kAXValueAttribute) as String?) == a.value { break }
@@ -93,7 +93,7 @@ enum Actuator {
             }
             usleep(40_000)
         }
-        if text.count > 40 || text.contains("\n") { paste(text, pid: pid) } else { NativeApp.type(text, pid: pid) }
+        if text.count > 40 || text.contains("\n") { paste(text, pid: pid) } else { typeKeys(text, pid: pid) }
         // Wait until the field shows it (apps apply input on their own run loop), then a beat for parsers like Calendar's.
         if !text.isEmpty {
             for _ in 0..<30 {
@@ -175,5 +175,53 @@ enum Actuator {
             usleep(20_000)
         }
         return nil
+    }
+
+    // MARK: finding elements, menus, typing
+
+    static func element(pid: pid_t, path want: String) -> AXUIElement? {
+        AXSensor.element(pid: pid, path: want)
+    }
+
+    /// `element`, retried for up to `timeout` s: an app that's just launching may have no window for a beat.
+    static func waitElement(pid: pid_t, path: String?, timeout: Double = 3) -> AXUIElement? {
+        guard let path else { return nil }
+        let end = Date().addingTimeInterval(timeout)
+        repeat {
+            if let el = element(pid: pid, path: path) { return el }
+            usleep(100_000)
+        } while Date() < end
+        return nil
+    }
+
+    /// Open a popup button and press the menu item titled `item`.
+    static func choose(_ popup: AXUIElement, item: String) -> String? {
+        AXUIElementPerformAction(popup, kAXPressAction as CFString)
+        for _ in 0..<10 {
+            usleep(100_000)
+            var q = [popup]
+            while !q.isEmpty {
+                let el = q.removeFirst()
+                if AX.role(el) == "AXMenuItem", (AX.attr(el, kAXTitleAttribute) as String?) == item {
+                    return AXUIElementPerformAction(el, kAXPressAction as CFString) == .success ? nil : "menu item press failed"
+                }
+                q.append(contentsOf: AX.children(el))
+            }
+        }
+        return "no menu item \"\(item)\""
+    }
+
+    static func typeKeys(_ text: String, pid: pid_t) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for ch in text.utf16 {
+            for down in [true, false] {
+                guard let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down) else { continue }
+                var c = ch
+                e.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+                e.setIntegerValueField(.eventSourceUserData, value: tag)
+                e.postToPid(pid)
+            }
+            usleep(8_000)
+        }
     }
 }

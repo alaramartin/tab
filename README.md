@@ -55,11 +55,9 @@ Settings:
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Apps never to read or record                        | `~/.tab/config.json`: `{"denyApps": ["com.example.app"]}` (password managers are always excluded)                                                                                             |
 | Read and record **only** some apps                  | `~/.tab/config.json`: `{"onlyApps": ["com.apple.mail", "com.google.Chrome"]}`. Everything else is ignored. Edits apply right away.                                                            |
-| Model                                               | `TAB_MODEL=qwen` (default), `lfm`, `qwen4`, or empty for no LLM                                                                                                                               |
+| Run without the local LLM (fast tiers only) | `TAB_LLM=off` |
 | Turn memory off (suggest, but save nothing to disk) | `TAB_MEMORY=off`                                                                                                                                                                              |
-| Debug logs (off by default)                         | `TAB_VERBOSE=1` shows ghost text and values in the hub's console; `TAB_PREDICTION_LOG=1` and `TAB_SESSION_LOG=1` write `brain/logs/`                                                          |
-| Let Claude write long text (descriptions, replies)  | `TAB_CLOUD=1` plus an Anthropic key. Off by default. When on, the screen's text and recent actions are sent to Anthropic, but only for a long-text field Tab already picked as your next step |
-| Use Claude instead of local models                  | `TAB_DECIDER=claude`                                                                                                                                                                          |
+| Debug details in the logs (off by default) | `TAB_DEBUG=1`: ghost text, typed values and timings in the hub's and TabShell's logs |
 
 ## Tools
 

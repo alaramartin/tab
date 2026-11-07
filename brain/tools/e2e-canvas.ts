@@ -50,7 +50,7 @@ const hubLog = join(dir, "hub.log");
 const dbFile = join(dir, "memory.db");
 const hub = spawn("node", ["--import", "tsx", "src/hub.ts"], {
     cwd: join(ROOT, "brain"),
-    env: { ...process.env, TAB_VERBOSE: "1", TAB_MEMORY_FILE: dbFile, TAB_MODEL: "", TAB_LADDER_FILE: join(dir, "ladder.json") },
+    env: { ...process.env, TAB_DEBUG: "1", TAB_MEMORY_FILE: dbFile, TAB_LLM: "off", TAB_LADDER_FILE: join(dir, "ladder.json") },
     stdio: ["ignore", openSync(hubLog, "a"), openSync(hubLog, "a")],
 });
 const shellLog = join(dir, "shell.log");

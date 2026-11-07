@@ -6,11 +6,6 @@
     "start": "tsx src/hub.ts",
     "dev": "tsx watch src/hub.ts",
     "send": "tsx tools/send.ts",
-    "replay": "tsx tools/replay.ts",
-    "latency": "tsx tools/latency.ts",
-    "scenarios": "tsx tools/scenarios.ts",
-    "flow4": "tsx tools/flow4-fixtures.ts",
-    "drive": "tsx tools/drive.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "memory": "node --no-warnings=ExperimentalWarning --import tsx tools/memory.ts",
@@ -19,7 +14,6 @@
     "e2e:canvas": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-canvas.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
     "dotenv": "^18.0.7",
     "ws": "^8.22.0"
   },

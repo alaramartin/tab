@@ -3,7 +3,7 @@
 #   shell/scripts/doctor.sh
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-M="${TAB_MODELS_DIR:-$HOME/.tab/models}"
+M="$HOME/.tab/models"
 bad=0
 ok()   { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 warn() { printf "  \033[33m!\033[0m %s\n      %s\n" "$1" "$2"; }

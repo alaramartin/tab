@@ -7,7 +7,7 @@
 //   ghosts     every suggestion shown and what happened to it (accepted / dismissed / ignored): labels for eval
 //   episodes   the step stream cut into tasks at app switches and 2-minute gaps
 //
-// What is learned from these tables lives next door: habits.ts, facts.ts, situations.ts, episodes.ts.
+// What is learned from these tables lives next door: habits.ts, facts.ts, episodes.ts.
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";

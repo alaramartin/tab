@@ -8,14 +8,12 @@ import type { HistEntry } from "../history.ts";
 import { HabitModel } from "../memory/habits.ts";
 import { Embedder } from "../memory/embed.ts";
 import { FactIndex } from "../memory/facts.ts";
-import { SituationIndex } from "../memory/situations.ts";
 import type { Memory } from "../memory/store.ts";
 import type { Decider, ModelInput } from "../model.ts";
 import { CHAT_PORT, LlamaServer, MODELS } from "../runtime/llama.ts";
 import { Ladder } from "./ladder.ts";
 import { LocalModelTier } from "./local.ts";
 import { SequenceTier } from "./sequence.ts";
-import { CloudWriter } from "../runtime/cloud.ts";
 import type { Candidate, PastStep, PredictContext } from "./types.ts";
 
 export function toPast(h: HistEntry): PastStep {
@@ -29,7 +27,6 @@ export function toPast(h: HistEntry): PastStep {
 export class LocalDecider implements Decider {
     readonly name: string;
     habits = new HabitModel();
-    situations = new SituationIndex();
     readonly ladder = new Ladder();
     facts: FactIndex;
     private embedder: Embedder | null;
@@ -39,16 +36,16 @@ export class LocalDecider implements Decider {
     private model: LocalModelTier | null;
     lastStats: { fastMs: number; modelMs?: number; promptTokens?: number; cachedTokens?: number } | null = null;
 
-    constructor(opts: { memory?: Memory | null; model?: string | null; embed?: boolean } = {}) {
-        const spec = MODELS[opts.model === undefined ? (process.env.TAB_MODEL ?? "qwen") : (opts.model ?? "")];
+    constructor(opts: { memory?: Memory | null; model?: "qwen" | null; embed?: boolean } = {}) {
+        // TAB_LLM=off runs the fast tiers only (tests, or a Mac without the model).
+        const useLlm = opts.model === undefined ? process.env.TAB_LLM !== "off" : opts.model !== null;
+        const spec = useLlm ? MODELS.qwen : undefined;
         this.server = spec ? new LlamaServer(spec, CHAT_PORT) : null;
         if (this.server && !this.server.available()) {
             console.warn(`[decider] ${this.server.path} missing: habits only (download it to ~/.tab/models)`);
             this.server = null as any;
         }
-        const cloud = new CloudWriter();
-        if (cloud.enabled) console.log(`[decider] long text is written by ${cloud.model} (TAB_CLOUD=1)`);
-        this.model = this.server ? new LocalModelTier(this.server, { cloud }) : null;
+        this.model = this.server ? new LocalModelTier(this.server) : null;
         const embedder = opts.embed === false ? null : new Embedder(opts.memory?.db ?? null);
         this.embedder = embedder?.available ? embedder : null;
         this.facts = new FactIndex(this.embedder);
@@ -59,7 +56,6 @@ export class LocalDecider implements Decider {
     /** Learn everything memory has seen, in order (at start, and after a forget). */
     rebuild(memory: Memory | null): void {
         this.habits = new HabitModel();
-        this.situations = new SituationIndex();
         this.facts = new FactIndex(this.embedder);
         const opts = { memory };
         if (opts.memory) {
@@ -68,7 +64,6 @@ export class LocalDecider implements Decider {
             for (const r of steps) {
                 const s: PastStep = { ts: r.ts, app: r.app, window: r.window ?? undefined, url: r.url ?? undefined, op: r.op as Action["op"], by: r.by, target: r.target ?? undefined, value: r.value ?? undefined };
                 this.habits.observe(s);
-                this.situations.observe(s);
                 this.facts.observe(s);
             }
             console.log(`[decider] ${this.facts.size} field facts; habits warm-started from ${steps.length} steps in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -83,7 +78,6 @@ export class LocalDecider implements Decider {
     observe(h: HistEntry): void {
         const s = toPast(h);
         this.habits.observe(s);
-        this.situations.observe(s);
         this.facts.observe(s);
     }
 

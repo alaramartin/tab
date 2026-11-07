@@ -3,7 +3,6 @@
 // "None" included) is the candidate's score. The prompt puts what changes least first (instructions, then the
 // screen, then recent actions, then the options) so llama-server's prompt cache covers as much as possible.
 import { chatPrompt, type LlamaServer } from "../runtime/llama.ts";
-import { isLongTextField, type CloudWriter } from "../runtime/cloud.ts";
 import { appName, describeEl, genericCandidates, historyLines, labelFor, otherScreenLines, screenLines, type OpenAction } from "./generic.ts";
 import type { Candidate, PredictContext, Predictor } from "./types.ts";
 
@@ -20,7 +19,7 @@ export class LocalModelTier implements Predictor {
 
     constructor(
         private server: LlamaServer,
-        private opts: { maxOptions?: number; screenLines?: number; examples?: (ctx: PredictContext) => string[]; cloud?: CloudWriter | null } = {},
+        private opts: { maxOptions?: number; screenLines?: number } = {},
     ) {}
 
     /** One throwaway request with the fixed instructions: compiles the GPU kernels and caches the prompt prefix. */
@@ -35,13 +34,12 @@ export class LocalModelTier implements Predictor {
         const screen = screenLines(s, this.opts.screenLines ?? 28);
         const hist = historyLines(ctx.history, ctx.now);
         const other = otherScreenLines(ctx.recent, s);
-        const examples = this.opts.examples?.(ctx) ?? [];
         const options = [...actions.map((a) => a.label), "None of these"];
         const user = `${head}\nScreen (top to bottom):\n${screen.map((l) => `- ${l}`).join("\n")}\n${
             other.length ? `\nPreviously seen screen, ${other[0]}:\n${other.slice(1).map((l) => `- ${l}`).join("\n")}\n` : ""
         }\nRecent actions (oldest first):\n${
             hist.length ? hist.map((l) => `- ${l}`).join("\n") : "- none"
-        }\n${examples.length ? `\nEarlier on this same screen:\n${examples.map((l) => `- ${l}`).join("\n")}\n` : ""}\nWhat will they do next?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
+        }\n\nWhat will they do next?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
         return { actions, prompt: chatPrompt(this.server.spec.family ?? "lfm", SYSTEM, user), n: options.length };
     }
 
@@ -94,12 +92,6 @@ export class LocalModelTier implements Predictor {
             const best = probs.sort((x, y) => y.prob - x.prob)[0];
             if (!best || tot <= 0) return null;
             return { value: opts[LETTERS.indexOf(best.token.trim())], p: best.prob / tot };
-        }
-        // Long text (a description, a reply) is written by the opt-in cloud model: the local one writes it badly.
-        if (this.opts.cloud?.enabled && isLongTextField(el)) {
-            const user = prompt.split("<|im_start|>user\n")[1]?.split("<|im_end|>")[0] ?? "";
-            const text = await this.opts.cloud.write(el, user.replace(/\nWhat will they do next\?[\s\S]*$/, ""), signal);
-            return text ? { value: text, p: 0.9 } : null;
         }
         const r = await this.server.complete(turn(`What exactly do they type into ${describeEl(el)}? Reply with only the text.`), {
             nPredict: 24, nProbs: 1, stop: ["\n", "<|im_end|>"], signal,

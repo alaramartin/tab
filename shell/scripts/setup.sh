@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
-M="${TAB_MODELS_DIR:-$HOME/.tab/models}"
+M="$HOME/.tab/models"
 mkdir -p "$M"
 
 command -v brew >/dev/null || { echo "Homebrew is needed: https://brew.sh"; exit 1; }

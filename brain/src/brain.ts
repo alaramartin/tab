@@ -3,7 +3,6 @@
 import type { Action, El, Ghost, HubToShell, HubToWeb, PaymentRequired, Rect, ScreenState, UserEvent } from "../../protocol/types.ts";
 import { countStep, newHud } from "./counters.ts";
 import { History, toTarget, type HistEntry } from "./history.ts";
-import { log } from "./log.ts";
 import type { Decider } from "./model.ts";
 import { PatternEngine, type PatternAction, type Step } from "./pattern.ts";
 import { CHROME, contentSig, findEl, StateStore, stateKey } from "./state.ts";
@@ -12,7 +11,7 @@ import type { Memory } from "./memory/store.ts";
 /** STRETCH: native steps take this many times as long, so the audience can follow (human's call: 10% slower). */
 const NATIVE_PACE = Number(process.env.TAB_NATIVE_PACE ?? 1.1);
 
-const DEBOUNCE_MS = Number(process.env.TAB_DEBOUNCE_MS ?? 40); // fast tiers take ~1 ms: predict as soon as a screen settles
+const DEBOUNCE_MS = 40; // fast tiers take ~1 ms: predict as soon as a screen settles
 const IDLE_MS = 600; // model ghosts wait for this much quiet
 const SHOW_AT = 0.6;
 const EXEC_TIMEOUT_MS = 3000;
@@ -104,7 +103,6 @@ export class Brain {
     // ---------- inbound ----------
 
     fromShell(m: any): void {
-        log.incoming("shell", m);
         switch (m.type) {
             case "hello":
                 this.sendHud();
@@ -166,7 +164,6 @@ export class Brain {
     }
 
     fromWeb(m: any): void {
-        log.incoming("web", m);
         switch (m.type) {
             case "hello":
                 break;
@@ -406,7 +403,7 @@ export class Brain {
             return { id, kind: "text", label: "⇥", rect: el.rect, ...(el.radius !== undefined ? { radius: el.radius } : {}), ghostText: a.value, ...(avoid.length ? { avoid } : {}) };
         }
         const ghost: Ghost = { id, kind: "action", label, rect: el.rect, ...(el.radius !== undefined ? { radius: el.radius } : {}), cursor: center, ...(avoid.length ? { avoid } : {}) };
-        if (this.pillWouldCover(el, active)) ghost.place = "inside"; // ghost-spec amendment: dock in wide fields
+        if (this.pillWouldCover(el, active)) ghost.place = "inside"; // dock the pill inside wide fields
         return ghost;
     }
 
@@ -714,16 +711,14 @@ export class Brain {
         this.o.sendShell({ type: "hud", hud: this.hud });
     }
 
-    private logPred(gen: number, source: "pattern" | "model", latencyMs: number, action: Action | null, shown: boolean): void {
-        const brief = action && { op: action.op, label: action.label, targetId: action.targetId, value: action.value, confidence: action.confidence, steps: action.steps?.length };
-        log.prediction({ ts: Date.now(), gen, source, latencyMs: Math.round(latencyMs * 10) / 10, action: brief, shown });
+    private logPred(_gen: number, source: "pattern" | "model", latencyMs: number, action: Action | null, _shown: boolean): void {
         this.o.onPredict?.({ source, latencyMs, action });
     }
 }
 
 /**
  * Rects of the other elements within 120 pt of the target (any role, text included), for `Ghost.avoid`:
- * the shell knows the pill's real size and places it where it covers none of them (ghost-spec amendment, A).
+ * the shell knows the pill's real size and places it where it covers none of them (the shell).
  */
 export function nearby(r: Rect, state: ScreenState | undefined, excludeId?: string): Rect[] {
     if (!state) return [];

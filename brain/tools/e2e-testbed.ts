@@ -48,10 +48,10 @@ const exec = (a: object) => execFileSync(SHELL, ["--exec", JSON.stringify({ app:
 
 import { openSync, readFileSync } from "node:fs";
 const hubLog = join(dir, "hub.log");
-// Habits only (TAB_MODEL=""): the loop under test is perception → memory → habit → ghost → Tab → exec.
+// Fast tiers only (TAB_LLM=off; E2E_LLM=1 adds the model): the loop under test is perception → memory → habit → ghost → Tab → exec.
 const hub = spawn("node", ["--import", "tsx", "src/hub.ts"], {
     cwd: join(ROOT, "brain"),
-    env: { ...process.env, TAB_TRACE: "1", TAB_VERBOSE: "1", TAB_MEMORY_FILE: dbFile, TAB_MODEL: process.env.E2E_MODEL ?? "", TAB_LADDER_FILE: join(dir, "ladder.json"), ANTHROPIC_API_KEY: "" },
+    env: { ...process.env, TAB_DEBUG: "1", TAB_MEMORY_FILE: dbFile, TAB_LLM: process.env.E2E_LLM ? "on" : "off", TAB_LADDER_FILE: join(dir, "ladder.json") },
     stdio: ["ignore", openSync(hubLog, "a"), openSync(hubLog, "a")],
 });
 const testbed = spawn(SHELL, ["--testbed", "--signup"], { stdio: "ignore" });

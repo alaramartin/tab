@@ -1,5 +1,5 @@
 // The HUD: a small non-activating panel in the top right. Clicking it never steals focus.
-// Layout and colours from design/ghost-spec.md ("HUD" and its "Amendments (HUD, …)").
+// The HUD panel.
 import AppKit
 
 final class HUDPanel: NSPanel {

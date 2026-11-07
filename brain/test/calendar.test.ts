@@ -4,8 +4,6 @@ import { test } from "node:test";
 import type { HubToShell, HubToWeb, PaymentRequired, ScreenState } from "../../protocol/types.ts";
 const { Brain } = await import("../src/brain.ts");
 const { CALENDAR, calendarOffer, eventFrom } = await import("./calendar-fixture.ts");
-const { log } = await import("../src/log.ts");
-log.enabled = false;
 const r = { x: 0, y: 0, w: 10, h: 10 };
 const checkout = (window: string, texts: string[]): ScreenState => ({
     type: "state", source: "web", app: "com.google.Chrome", window, url: "http://tickets.localhost:4001/checkout?qty=2", focused: true, seq: 1, ts: Date.now(),

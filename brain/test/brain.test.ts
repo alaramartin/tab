@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Action, HubToShell, HubToWeb, PaymentRequired, UserEvent } from "../../protocol/types.ts";
 import { Brain } from "../src/brain.ts";
-import { log } from "../src/log.ts";
 import { CHROME, releaseState, ROWS, TRACKER_URL, trackerState, SEARCH, STATUS, PR, SAVE, resultEl } from "./synthetic.ts";
 
-log.enabled = false;
 
 function harness(decide?: () => Action | null) {
     const shell: HubToShell[] = [];

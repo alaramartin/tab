@@ -68,6 +68,63 @@ enum TabConfig {
     }
 }
 
+/// Small Accessibility helpers shared by the sensor, the actuator and the shell.
+enum AX {
+    static func attr<T>(_ el: AXUIElement, _ name: String) -> T? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, name as CFString, &v) == .success else { return nil }
+        return v as? T
+    }
+
+    static func children(_ el: AXUIElement) -> [AXUIElement] {
+        attr(el, kAXChildrenAttribute) ?? []
+    }
+
+    static func role(_ el: AXUIElement) -> String { attr(el, kAXRoleAttribute) ?? "" }
+
+    static func frame(_ el: AXUIElement) -> Rect? {
+        guard let pv: AXValue = attr(el, kAXPositionAttribute), let sv: AXValue = attr(el, kAXSizeAttribute) else { return nil }
+        var p = CGPoint.zero, s = CGSize.zero
+        AXValueGetValue(pv, .cgPoint, &p)
+        AXValueGetValue(sv, .cgSize, &s)
+        return Rect(x: p.x, y: p.y, w: s.width, h: s.height)
+    }
+
+    static func focusedWindow(pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        if let w: AXUIElement = attr(app, kAXFocusedWindowAttribute) { return w }
+        if let w: AXUIElement = attr(app, kAXMainWindowAttribute) { return w }
+        let ws: [AXUIElement] = attr(app, kAXWindowsAttribute) ?? []
+        return ws.first
+    }
+
+    /// The focused window's title, or "". Call off the main thread: it waits on the other app.
+    static func windowTitle(pid: pid_t) -> String {
+        guard AXIsProcessTrusted(), let w = focusedWindow(pid: pid) else { return "" }
+        AXUIElementSetMessagingTimeout(w, 0.25)
+        return attr(w, kAXTitleAttribute) ?? ""
+    }
+
+    static func setFrontmost(pid: pid_t) {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    }
+
+    /// Breadth-first search for the first element with `role`, at most `depth` levels down.
+    static func find(_ root: AXUIElement, role want: String, depth: Int = 6) -> (AXUIElement, String)? {
+        var q: [(AXUIElement, Int, String)] = [(root, 0, role(root))]
+        while !q.isEmpty {
+            let (el, d, path) = q.removeFirst()
+            if role(el) == want { return (el, path) }
+            if d >= depth { continue }
+            for c in children(el) { q.append((c, d + 1, path + " > " + role(c))) }
+        }
+        return nil
+    }
+}
+
 /// One element's attributes, fetched in a single batched AX call.
 struct AXInfo {
     var role = "", subrole = "", title = "", desc = "", value: Any?, identifier = "", placeholder = "", help = ""
@@ -368,8 +425,6 @@ final class AXPoller {
     private var seq = 0
     private var pending: DispatchWorkItem?
     private var timer: DispatchSourceTimer?
-    /// Apps another reader already covers (Terminal: TerminalReader keeps its 40-line `term` element).
-    var skip: Set<String> = []
     var onState: ((ScreenState) -> Void)?
     var onSnapshotMs: ((Double, Int) -> Void)?
     var onIconRequest: (([IconLabeler.Request]) -> Void)?
@@ -381,7 +436,7 @@ final class AXPoller {
 
     func setFrontmost(_ app: NSRunningApplication?) {
         let bid = app.flatMap(appId)
-        let t: (pid_t, String)? = (app != nil && !TabConfig.denied(bid) && !skip.contains(bid ?? "")) ? (app!.processIdentifier, bid!) : nil
+        let t: (pid_t, String)? = (app != nil && !TabConfig.denied(bid)) ? (app!.processIdentifier, bid!) : nil
         DispatchQueue.main.async { self.attach(t) }
         if timer == nil {
             let tm = DispatchSource.makeTimerSource(queue: queue)
@@ -491,7 +546,7 @@ final class AXPoller {
                 ocrQueue.async {
                     let t0 = CFAbsoluteTimeGetCurrent()
                     let els = VisionSensor.elements(pid: pid)
-                    if ProcessInfo.processInfo.environment["TAB_DEBUG_OCR"] != nil {
+                    if debugEnabled {
                         log(String(format: "ocr: %d elements in %.0f ms (pid %d)", els.count, (CFAbsoluteTimeGetCurrent() - t0) * 1000, pid))
                     }
                     self.queue.async {

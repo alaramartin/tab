@@ -1,7 +1,7 @@
 // The ghost overlay: one borderless, transparent, click-through window over the display that holds the ghost.
 // Ghost views are flipped and their bounds start at that display's top-left in protocol points, so protocol
 // (AX/top-left of the primary display) points are view points on any display.
-// Every number here comes from design/ghost-spec.md; change the spec first, then this file.
+// The ghost: highlight box, pill, cursor, inline text.
 import AppKit
 
 func hex(_ v: UInt32, _ a: CGFloat = 1) -> NSColor {
@@ -449,7 +449,7 @@ final class GhostView: NSView {
         return .systemFont(ofSize: min(20, max(12, r.h * 0.42)))
     }
 
-    /// Where an accept ripple starts: the box, or the pill for ghosts without a rect (Terminal).
+    /// Where an accept ripple starts: the box, or the pill for ghosts without a rect.
     var rippleRect: CGRect { boxRect() ?? pillRect }
 
     private func boxRect() -> CGRect? {
@@ -467,7 +467,7 @@ final class GhostView: NSView {
     /// The box's corner radius: concentric with the element's (its radius + the outset), so square buttons get a square
     /// box, rounded ones a rounded box and capsules a capsule.
     var boxCorner: CGFloat {
-        guard let b = boxRect() else { return pillRect.height / 2 } // Terminal: the ripple leaves the capsule pill
+        guard let b = boxRect() else { return pillRect.height / 2 } // no rect: the ripple leaves the capsule pill
         return min(elementRadius + style.boxOutset, b.height / 2, b.width / 2)
     }
 
@@ -571,7 +571,7 @@ final class GhostView: NSView {
             return p == right ? area * 1.2 : area
         }
         let fitting = cands.filter { onScreen.contains(CGRect(origin: $0, size: size)) }
-        if ProcessInfo.processInfo.environment["TAB_DEBUG_PLACE"] != nil {
+        if debugEnabled {
             log("place \(ghost.id): " + cands.map { "\(Int($0.x)),\(Int($0.y)) fits=\(fitting.contains($0)) cost=\(Int(covered($0)))" }.joined(separator: " | "))
         }
         return fitting.min { covered($0) < covered($1) } ?? cands[0] // min keeps the first of equals: below wins ties

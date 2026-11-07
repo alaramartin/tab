@@ -1,14 +1,14 @@
 // Local model runtime: llama.cpp's llama-server as a child process, one per model.
-// Models live in ~/.tab/models (TAB_MODELS_DIR). The chat model runs with prompt caching, so a request that shares a
+// Models live in ~/.tab/models. The chat model runs with prompt caching, so a request that shares a
 // prefix with the previous one (the fixed instructions, often the same screen) only pays for the new tokens.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const MODELS_DIR = process.env.TAB_MODELS_DIR || join(homedir(), ".tab", "models");
+export const MODELS_DIR = join(homedir(), ".tab", "models");
 
-export type Family = "lfm" | "qwen3" | "chatml";
+export type Family = "lfm" | "qwen3"; // qwen3: the predictor; lfm: the icon-naming vision model
 export interface ModelSpec {
     name: string;
     file: string;
@@ -18,9 +18,7 @@ export interface ModelSpec {
 }
 
 export const MODELS: Record<string, ModelSpec> = {
-    lfm: { name: "lfm", file: "LFM2.5-1.2B-Instruct-Q4_K_M.gguf", family: "lfm" },
     qwen: { name: "qwen", file: "Qwen3-1.7B-Q4_K_M.gguf", family: "qwen3" },
-    qwen4: { name: "qwen4", file: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", family: "chatml" }, // non-thinking instruct
     embed: { name: "embed", file: "embeddinggemma-300M-Q8_0.gguf", embedding: true },
     vlm: { name: "vlm", file: "LFM2-VL-450M-Q8_0.gguf", mmproj: "mmproj-LFM2-VL-450M-Q8_0.gguf", family: "lfm" },
 };
@@ -178,6 +176,6 @@ function normalize(v: number[]): number[] {
     return v.map((x) => x / n);
 }
 
-export const CHAT_PORT = Number(process.env.TAB_CHAT_PORT ?? 7811);
-export const EMBED_PORT = Number(process.env.TAB_EMBED_PORT ?? 7812);
-export const VLM_PORT = Number(process.env.TAB_VLM_PORT ?? 7816);
+export const CHAT_PORT = 7811;
+export const EMBED_PORT = 7812;
+export const VLM_PORT = 7816;

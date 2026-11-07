@@ -1,7 +1,7 @@
-// TabShell: draws ghosts and the HUD, owns Tab/Esc, reads Terminal, activates apps.
+// TabShell: reads and records the front app, draws ghosts and the HUD, owns Tab/Esc, runs actions.
+//   env TAB_DEBUG=1: details in the log (ghost labels, exec targets, OCR/typing/placement timings)
 //   TabShell                       run (connects to ws://127.0.0.1:7800)
 //   TabShell --selftest            draw every ghost kind at fixed rects, normal and high contrast
-//   TabShell --dump                print one Terminal snapshot as JSON and exit
 //   TabShell --tap-selftest        check the Tab/Esc/hold rules on synthetic events (no permissions needed)
 //   TabShell --render-reveal out.png   the end-of-demo reveal card, offscreen
 //   TabShell --render out.png      render the selftest ghosts offscreen to a PNG (no permissions needed); --bg img.png, --dark,
@@ -22,35 +22,6 @@ let selfBundleId = "dev.tab.shell"
 func flagValue(_ name: String) -> String? {
     guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
     return args[i + 1]
-}
-
-// MARK: - --dump
-
-if args.contains("--dump") {
-    let running = NSWorkspace.shared.runningApplications.filter { terminalApps.contains($0.bundleIdentifier ?? "") }
-    let front = NSWorkspace.shared.frontmostApplication
-    let pick = running.first { $0.processIdentifier == front?.processIdentifier } ?? running.first
-    var report: [String: Any] = ["axTrusted": AXIsProcessTrusted(), "frontmost": front?.bundleIdentifier ?? ""]
-    if let app = pick, let bid = app.bundleIdentifier {
-        report["app"] = bid
-        switch TerminalReader.snapshot(pid: app.processIdentifier, bundleId: bid) {
-        case .success(let s):
-            report["ok"] = true
-            report["path"] = s.path
-            report["lineCount"] = s.lines.count
-            let st = TerminalReader.state(s, seq: 1)
-            report["state"] = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(st)))
-        case .failure(let e):
-            report["ok"] = false
-            report["error"] = e.description
-        }
-    } else {
-        report["ok"] = false
-        report["error"] = "neither Terminal nor iTerm2 is running"
-    }
-    let data = try! JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-    print(String(decoding: data, as: UTF8.self))
-    exit(report["ok"] as? Bool == true ? 0 : 1)
 }
 
 // MARK: - --ax-dump / --ax-bench [bundleId] [N]: read any app's focused window
@@ -121,7 +92,6 @@ final class Shell: NSObject, InputTapDelegate {
     private var hubConnected = false
     let tap = InputTap()
     let hub: HubClient
-    let terminal = TerminalPoller()
     let ax = AXPoller() // any frontmost app, via Accessibility
     lazy var actions = ActionObserver(ax: ax)
     private var lastHud = Hud()
@@ -152,12 +122,6 @@ final class Shell: NSObject, InputTapDelegate {
             self?.hud.setConnected(false)
             self?.overlay.hide()
         }
-        terminal.onState = { [weak self] s in self?.hub.send(.state(s)) }
-        // Terminal is read through AX like any app (its text area's value is kept around the insertion point, i.e.
-        // the latest output). The dedicated TerminalReader (40 lines, session-log fallback) is opt-in.
-        let termReader = ProcessInfo.processInfo.environment["TAB_TERM_READER"] != nil
-        ax.skip = termReader ? terminalApps : []
-        if !termReader { terminal.onState = nil }
         ax.onState = { [weak self] s in if self?.paused == false { self?.hub.send(.state(s)) } }
         ax.onIconRequest = { [weak self] items in if self?.paused == false { self?.hub.send(.iconRequest(items)) } }
         actions.onEvent = { [weak self] e in if self?.paused == false { self?.hub.send(.userEvent(e)) } }
@@ -170,7 +134,6 @@ final class Shell: NSObject, InputTapDelegate {
         startTapWhenTrusted()
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appActivated(_:)),
                                                           name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        terminal.setFrontmost(NSWorkspace.shared.frontmostApplication)
         ax.setFrontmost(NSWorkspace.shared.frontmostApplication)
         hub.start()
         setUpMenuBar()
@@ -275,7 +238,6 @@ final class Shell: NSObject, InputTapDelegate {
 
     private func reportFrontmost(_ app: NSRunningApplication?) {
         guard let app, let bid = appId(app), bid != selfBundleId else { return }
-        terminal.setFrontmost(app)
         ax.setFrontmost(app)
         // The window title is an AX round trip to another app; the tap shares the main run loop, so never block it.
         let pid = app.processIdentifier
@@ -295,16 +257,8 @@ final class Shell: NSObject, InputTapDelegate {
         switch m {
         case .ghost(_) where paused:
             break
-        case .ghost(var g):
-            // STRETCH: a cross-app offer sits on that app's Dock icon, pill above it.
-            if let bid = g.dockApp, let icon = NativeApp.dockIcon(bid) {
-                g.rect = icon
-                g.place = "above"
-                g.radius = icon.w * 0.22
-                g.pillAt = nil
-                g.cursor = nil
-            }
-            log("ghost \(g.id) \(g.kind.rawValue) \"\(g.label)\" rect=\(g.rect.map { "\($0.x),\($0.y) \($0.w)×\($0.h)" } ?? "-") pillAt=\(g.pillAt.map { "\($0.x),\($0.y)" } ?? "-") place=\(g.place ?? "-") avoid=\(g.avoid?.count ?? 0)")
+        case .ghost(let g):
+            debugLog("ghost \(g.id) \(g.kind.rawValue) \"\(g.label)\" rect=\(g.rect.map { "\($0.x),\($0.y) \($0.w)×\($0.h)" } ?? "-") pillAt=\(g.pillAt.map { "\($0.x),\($0.y)" } ?? "-") place=\(g.place ?? "-") avoid=\(g.avoid?.count ?? 0)")
             overlay.show(g)
         case .ghostHide:
             log("ghost_hide")
@@ -333,7 +287,7 @@ final class Shell: NSObject, InputTapDelegate {
                 } else { err = "\(a.app) not running" }
                 self?.ax.invalidate() // report the new screen
                 DispatchQueue.main.async {
-                    log("exec \(ghostId): \(a.op) \(a.targetPath ?? a.value ?? "") → \(err ?? "ok")")
+                    debugLog("exec \(ghostId): \(a.op) \(a.targetPath ?? a.value ?? "") → \(err ?? "ok")")
                     self?.hub.send(.execResult(ghostId: ghostId, ok: err == nil, error: err))
                 }
             }
@@ -414,11 +368,8 @@ enum AppSwitcher {
     /// Activate by bundle id. A background (LSUIElement) app can't always activate others under cooperative activation,
     /// so try NSRunningApplication, then AX frontmost, then LaunchServices; confirm by pid.
     static func activate(_ bid: String, done: @escaping (Bool, String?) -> Void) {
-        // STRETCH: a native app's steps need its window. LaunchServices "reopens" a running app like a Dock click,
-        // which brings back a closed or minimized Calendar window (plain activate leaves it windowless).
-        if nativeApps.contains(bid) { return open(bid, done: done) }
         let instances = NSRunningApplication.runningApplications(withBundleIdentifier: bid)
-        guard let app = pick(instances) else { return open(bid, done: done) }
+        guard let app = instances.first else { return open(bid, done: done) }
         let pid = app.processIdentifier
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return done(true, nil) }
         app.activate(options: [.activateAllWindows])
@@ -428,36 +379,6 @@ enum AppSwitcher {
             // LaunchServices can't choose between instances, so only fall back to it when there's one.
             if instances.count == 1 { open(bid, done: done) } else { done(false, "\(bid) (pid \(pid)) did not come to the front") }
         }
-    }
-
-    /// With several instances of one app (the user's Chrome and the debug Chrome share a bundle id),
-    /// prefer the one started with --remote-debugging-port: that's the one C drives.
-    static func pick(_ instances: [NSRunningApplication]) -> NSRunningApplication? {
-        if instances.count > 1, let debug = instances.first(where: { arguments(of: $0.processIdentifier).contains { $0.hasPrefix("--remote-debugging-port") } }) {
-            return debug
-        }
-        return instances.first
-    }
-
-    /// argv of another process (same user) via sysctl KERN_PROCARGS2: argc, exec path, padding, then argv.
-    static func arguments(of pid: pid_t) -> [String] {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
-        var buf = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return [] }
-        let argc = Int(buf.withUnsafeBytes { $0.load(as: Int32.self) })
-        var i = MemoryLayout<Int32>.size
-        while i < size, buf[i] != 0 { i += 1 } // exec path
-        while i < size, buf[i] == 0 { i += 1 } // padding
-        var args: [String] = []
-        while args.count < argc, i < size {
-            let s = i
-            while i < size, buf[i] != 0 { i += 1 }
-            args.append(String(decoding: buf[s..<i], as: UTF8.self))
-            i += 1
-        }
-        return args
     }
 
     private static func open(_ bid: String, done: @escaping (Bool, String?) -> Void) {
@@ -625,15 +546,6 @@ func renderHUD(to out: String) {
 // MARK: - main
 
 if args.contains("--tap-selftest") { runTapSelftest() }
-
-if let bid = flagValue("--which") {
-    for a in NSRunningApplication.runningApplications(withBundleIdentifier: bid) {
-        let dbg = AppSwitcher.arguments(of: a.processIdentifier).contains { $0.hasPrefix("--remote-debugging-port") }
-        print("pid \(a.processIdentifier)\(dbg ? " (debug)" : "")")
-    }
-    print("switch_app picks pid \(AppSwitcher.pick(NSRunningApplication.runningApplications(withBundleIdentifier: bid))?.processIdentifier ?? -1)")
-    exit(0)
-}
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

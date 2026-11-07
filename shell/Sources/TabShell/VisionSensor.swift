@@ -43,7 +43,7 @@ enum VisionSensor {
         guard permitted, let (image, frame) = capture(pid: pid) else { return [] }
         let capMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         let req = VNRecognizeTextRequest()
-        req.recognitionLevel = ProcessInfo.processInfo.environment["TAB_OCR_ACCURATE"] != nil ? .accurate : .fast
+        req.recognitionLevel = .fast // ~10–45 ms; .accurate was 5× slower and read UI labels no better
         req.usesLanguageCorrection = false
         let handler = VNImageRequestHandler(cgImage: image)
         let t1 = CFAbsoluteTimeGetCurrent()

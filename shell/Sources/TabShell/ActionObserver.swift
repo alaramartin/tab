@@ -117,7 +117,7 @@ final class ActionObserver {
         var target: El? = nil
         var after: String? = nil
         var el = t.el
-        if ProcessInfo.processInfo.environment["TAB_DEBUG_TYPING"] != nil || CommandLine.arguments.contains("--debug-typing") {
+        if debugEnabled {
             let now = focusedElement(pid: t.pid)
             log("typing commit: start role \(el.map { AXInfo($0).role } ?? "-") · focused now \(now.map { "\(AXInfo($0).role)/\(AXInfo($0).subrole)" } ?? "-")")
         }

@@ -8,7 +8,7 @@
 //   npm run eval                        all steps in ~/.tab/memory.db (TAB_MEMORY_FILE to override)
 //   npm run eval -- --since 7d --app com.apple.mail --tiers habit,pattern --json out.json
 //   default tiers: habit, pattern, sequence (add fact with --tiers habit,pattern,sequence,fact: starts the embedder)
-//   npm run eval -- --model lfm|qwen [--model-every N] [--max-steps N]   add the local LLM tier (llama-server)
+//   npm run eval -- --llm [--model-every N] [--max-steps N]   add the local LLM tier (Qwen3-1.7B on llama-server)
 //
 // Reports, per tier, the ladder (best candidate across tiers) and per app:
 //   top-1 / top-3 accuracy, and at score thresholds 0.3/0.5/0.7: coverage (share of steps with a ghost) and
@@ -28,7 +28,6 @@ import { genericCandidates } from "../src/predict/generic.ts";
 import { LlamaServer, MODELS } from "../src/runtime/llama.ts";
 import { Ladder } from "../src/predict/ladder.ts";
 import { SequenceTier } from "../src/predict/sequence.ts";
-import { SituationIndex } from "../src/memory/situations.ts";
 
 const args = process.argv.slice(2);
 const flag = (n: string) => {
@@ -85,12 +84,11 @@ type Rec = { app: string; tier: string; score: number; correct: boolean; top3: b
 
 const mem = new Memory(process.env.TAB_MEMORY_FILE || DEFAULT_MEMORY_FILE);
 const tiers = (flag("--tiers") ?? "habit,pattern,sequence").split(",").map((t) => TIERS[t]?.() ?? (() => { throw new Error(`no tier ${t}`); })());
-const modelName = flag("--model");
+const modelName = args.includes("--llm") ? "qwen" : undefined;
 const modelEvery = Number(flag("--model-every") ?? 1);
 const maxSteps = Number(flag("--max-steps") ?? Infinity);
-const server = modelName ? new LlamaServer(MODELS[modelName] ?? (() => { throw new Error(`no model ${modelName}`); })(), ({ lfm: 7811, qwen: 7813, qwen4: 7814 } as Record<string, number>)[modelName] ?? 7815) : null;
-const situations = new SituationIndex();
-const modelTier = server ? new LocalModelTier(server, args.includes("--no-examples") ? {} : { examples: (c) => situations.examples(c) }) : null;
+const server = modelName ? new LlamaServer(MODELS.qwen, 7813) : null; // its own port: a running hub keeps 7811
+const modelTier = server ? new LocalModelTier(server) : null;
 if (server) await server.start();
 let dumped = 0;
 const ladder = new Ladder(flag("--fit") !== undefined || args.includes("--fit") ? null : undefined);
@@ -174,7 +172,6 @@ for (const r of rows) {
         recs.push({ ts: r.ts, app: r.app, tier: "ladder", score: all[0]?.score ?? 0, correct: !!all[0] && matches(all[0].action, r, active!), top3: all.slice(0, 3).some((x) => matches(x.action, r, active!)), ms: 0 });
     } else skipped++;
     for (const t of tiers) t.observe?.(step, null);
-    situations.observe(step);
     history.push(step);
 
 }

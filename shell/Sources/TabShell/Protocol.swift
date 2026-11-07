@@ -100,7 +100,6 @@ struct Ghost: Codable, Equatable {
     var place: String? // "below" (default) | "above" | "right" | "inside"
     var avoid: [Rect]? // nearby interactive elements the pill should not cover (used when `place` is absent)
     var radius: Double? = nil // the target's CSS corner radius: the box is drawn concentric with it
-    var dockApp: String? = nil // STRETCH: anchor on this bundle id's Dock icon (A resolves the rect)
     var caret: Rect? = nil // text ghost as a completion: draw only ghostText, right after this insertion point
 }
 
@@ -218,6 +217,10 @@ enum ShellToHub: Encodable {
 }
 
 func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
+
+/// Details (ghost labels, typed values, timings) only with TAB_DEBUG=1; the normal log stays free of what the user does.
+let debugEnabled = ProcessInfo.processInfo.environment["TAB_DEBUG"] != nil
+func debugLog(_ s: String) { if debugEnabled { log(s) } }
 
 func log(_ s: String) {
     let f = DateFormatter.logStamp.string(from: Date())

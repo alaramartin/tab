@@ -54,7 +54,7 @@ if (cmd === "stats") {
     const { summarizeEpisodes } = await import("../src/memory/episodes.ts");
     const { Embedder } = await import("../src/memory/embed.ts");
     const { LlamaServer, MODELS } = await import("../src/runtime/llama.ts");
-    const llm = new LlamaServer(MODELS[process.env.TAB_MODEL || "qwen"], 7819);
+    const llm = new LlamaServer(MODELS.qwen, 7819);
     const emb = new Embedder(mem.db);
     const n = await summarizeEpisodes(mem, llm, emb, { limit: Number(flag("--limit") ?? 20), now: Date.now() + 3_600_000 });
     console.log(`summarised ${n} episodes`);
