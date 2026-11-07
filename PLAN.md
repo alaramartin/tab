@@ -2,7 +2,7 @@
 
 Tab predicts your next action on the Mac and shows it as a ghost: a highlight on the button you're about to click, or gray text in the field you're about to fill. Tab does it, Esc dismisses it.
 
-This file records how Tab was planned and built. It has three parts: the hackathon version (October 2026), the general version that followed (November 2026), and what's still to do. Run instructions are in the README. Design details live in the code, next to what they describe.
+This file records how Tab was planned and built. It has five parts: the hackathon version (October 2026), the general version that followed (November 2026), how Tab works now, how to develop it, and what's still to do. Run instructions are in the README. Design details live in the code, next to what they describe.
 
 ---
 
@@ -76,17 +76,6 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 - Chrome read through Accessibility like any other app, with CDP optional.
 - Always-on recording, with a denylist and never password fields.
 
-### Architecture
-
-```
-TabShell (Swift)                          Hub + brain (TypeScript, :7800)
-  AXSensor       any app's window   ──▶    memory.db: screens, steps, ghosts, facts, episodes
-  VisionSensor   OCR + icon crops           fast tiers (~1 ms): sequences, habits, field facts
-  ActionObserver clicks, typing             local LLM (Qwen3-1.7B, llama.cpp) after a pause, ~0.4 s
-  Actuator       click/type/key     ◀──    combiner → one calibrated score → ghost above 0.6
-  Overlay + HUD  the ghost
-```
-
 ### What was built, in order, and what changed
 
 1. **Perception and recording.**
@@ -153,9 +142,43 @@ Once v2 worked, everything that existed only for the hackathon or as an alternat
 - **Payments:** the core moved into the hub: x402 only, with the screen check and the ledger. A future detector reports 402s to the hub.
 - **Settings and switches:** the slow OCR mode, port and tuning knobs, and the separate debug switches were removed. One `TAB_DEBUG` remains, and the logs hold no values without it.
 - **HUD:** compact, with the Tab did / You did breakdown behind a click. The end-of-demo Reveal card was removed.
-- **Files:** Jev's docs, demo-day scripts, `design/` and the old fixtures were removed. The two video projects moved into `demo-videos/`.
+- **Files:** Jev's docs, demo-day scripts, `design/`, the old fixtures and the design skills in `.claude/` were removed. The two video projects moved into `demo-videos/`.
 
-## 3. Still to do
+## 3. How Tab works
+
+```
+TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
+  AXSensor        the front window   ──▶    memory.db (SQLite: screens, steps, ghosts, facts)
+  VisionSensor    OCR, icon crops           fast predictions: chores, sequences, habits, form facts   ~1 ms
+  ActionObserver  your clicks, typing       local LLM (Qwen3-1.7B on llama.cpp), after a pause       ~0.4 s
+  Actuator        click / type / key  ◀──   one calibrated score per suggestion; a ghost above 0.6
+  Overlay, HUD    the ghost                 payments (x402)
+```
+
+- **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model.
+- **Memory** (`ActionObserver.swift`, `brain/src/memory/`): every click, typing burst and shortcut is saved with the element it hit and the screens before and after it.
+  - Screens are stored once each, and a changed screen is stored as a small patch on the one before.
+  - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
+  - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search.
+- **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. The local model only runs once you pause, and stops as soon as you do something.
+- **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
+
+## 4. Development
+
+| Command (in `brain/`) | What it does |
+| --- | --- |
+| `npm test` | Unit tests |
+| `npm run e2e` | End to end on TabShell's own test window: recording, acting, a habit becoming a ghost, form fills, completions, row numbering. It moves the real mouse and types, so leave the Mac alone while it runs. |
+| `npm run e2e:canvas` | The same for a window with no Accessibility tree |
+| `npm run eval [-- --llm]` | Replays memory.db and scores each predictor: accuracy, coverage at 85% precision, latency, per app |
+| `npm run memory -- stats` | What's in memory |
+| `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time) |
+| `npm run memory -- search <words>` | Finds past tasks by meaning |
+| `npm run send -- --listen` | Prints everything the hub sends |
+
+`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell.
+
+## 5. Still to do
 
 1. **Notice payment requests in any app.** The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
 2. **Design the HUD.** It's a placeholder: status, last payment, and an expandable Tab did / You did.
