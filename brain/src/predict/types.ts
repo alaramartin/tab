@@ -23,7 +23,7 @@ export interface PredictContext {
     history: PastStep[]; // oldest first
 }
 
-export type Tier = "pattern" | "sequence" | "habit" | "fact" | "model";
+export type Tier = "pattern" | "sequence" | "habit" | "fact" | "similar" | "model";
 
 export interface Candidate {
     action: Action; // concrete: targets an element of ctx.active (or a sequence / navigation)

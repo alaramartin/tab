@@ -7,7 +7,7 @@
 //
 //   npm run eval                        all steps in ~/.tab/memory.db (TAB_MEMORY_FILE to override)
 //   npm run eval -- --since 7d --app com.apple.mail --tiers habit,pattern --json out.json
-//   default tiers: habit, pattern, sequence (add fact with --tiers habit,pattern,sequence,fact: starts the embedder)
+//   default tiers: habit, pattern, sequence (add fact or similar, e.g. --tiers habit,pattern,sequence,fact,similar: starts the embedder)
 //   npm run eval -- --llm [--model-every N] [--max-steps N]   add the local LLM tier (Qwen3-1.7B on llama-server)
 //
 // Reports, per tier, the ladder (best candidate across tiers) and per app:
@@ -18,6 +18,7 @@ import type { Action, ScreenState } from "../../protocol/types.ts";
 import { HistEntry } from "../src/history.ts";
 import { HabitModel } from "../src/memory/habits.ts";
 import { FactIndex } from "../src/memory/facts.ts";
+import { SimilarMoments } from "../src/memory/similar.ts";
 import { Embedder } from "../src/memory/embed.ts";
 import { elSig, expandEls, norm } from "../src/memory/sig.ts";
 import { DEFAULT_MEMORY_FILE, Memory, type StepRow } from "../src/memory/store.ts";
@@ -57,6 +58,7 @@ const TIERS: Record<string, () => Predictor> = {
     habit: () => new HabitModel(),
     pattern: () => new PatternTier(),
     fact: () => new FactIndex(new Embedder(null)),
+    similar: () => new SimilarMoments(new Embedder(null)),
     sequence: () => new SequenceTier(),
 };
 
@@ -138,7 +140,7 @@ for (const r of rows) {
         const ctx: PredictContext = { now: r.ts - 1, active: active!, recent: [...recentByPlace.values()].filter((s) => s !== active && r.ts - s.ts < 600_000).slice(-8).reverse(), history: history.slice(-50) };
         const all: Candidate[] = [];
         for (const t of tiers) {
-            if (t instanceof FactIndex) await t.prepare(active!); // live, this runs when the screen arrives
+            if (t instanceof FactIndex || t instanceof SimilarMoments) await t.prepare(active!); // live, this runs when the screen arrives
             const t0 = performance.now();
             const c = (await t.predict(ctx)).sort((a, b) => b.score - a.score);
             const ms = performance.now() - t0;

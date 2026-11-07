@@ -1,5 +1,5 @@
 // The hub's decider: the prediction ladder behind the Brain's Decider interface.
-//   fast()    habits (memory) → combiner. ~1 ms, synchronous: the Brain shows it right away when it's confident.
+//   fast()    sequences, habits, field facts, similar moments (memory) → combiner. ~1 ms, synchronous: the Brain shows it right away when it's confident.
 //   decide()  habits + the local LLM (reranks and fills values) → combiner. ~0.4 s; the Brain calls it after the
 //             user has paused, and aborts it when anything changes.
 // Habits are warm-started from memory.db and learn every step as it happens (observe).
@@ -8,6 +8,7 @@ import type { HistEntry } from "../history.ts";
 import { HabitModel } from "../memory/habits.ts";
 import { Embedder } from "../memory/embed.ts";
 import { FactIndex } from "../memory/facts.ts";
+import { SimilarMoments } from "../memory/similar.ts";
 import type { Memory } from "../memory/store.ts";
 import type { Decider, ModelInput } from "../model.ts";
 import { CHAT_PORT, LlamaServer, MODELS } from "../runtime/llama.ts";
@@ -29,6 +30,7 @@ export class LocalDecider implements Decider {
     habits = new HabitModel();
     readonly ladder = new Ladder();
     facts: FactIndex;
+    similar: SimilarMoments;
     private embedder: Embedder | null;
     readonly sequence = new SequenceTier();
     private preparing: AbortController | null = null;
@@ -53,6 +55,7 @@ export class LocalDecider implements Decider {
         const embedder = opts.embed === false ? null : new Embedder(opts.memory?.db ?? null);
         this.embedder = embedder?.available ? embedder : null;
         this.facts = new FactIndex(this.embedder);
+        this.similar = new SimilarMoments(this.embedder);
         this.name = `local:habits${this.server ? `+${this.server.spec.name}` : ""}${this.ladder.fitted ? " (fitted ladder)" : ""}`;
         this.rebuild(opts.memory ?? null);
     }
@@ -61,6 +64,7 @@ export class LocalDecider implements Decider {
     rebuild(memory: Memory | null): void {
         this.habits = new HabitModel();
         this.facts = new FactIndex(this.embedder);
+        this.similar = new SimilarMoments(this.embedder);
         const opts = { memory };
         if (opts.memory) {
             const t0 = performance.now();
@@ -69,20 +73,22 @@ export class LocalDecider implements Decider {
                 const s: PastStep = { ts: r.ts, app: r.app, window: r.window ?? undefined, url: r.url ?? undefined, op: r.op as Action["op"], by: r.by, target: r.target ?? undefined, value: r.value ?? undefined, prov: r.prov ?? undefined };
                 this.habits.observe(s);
                 this.facts.observe(s);
+                this.similar.observe(s);
             }
-            console.log(`[decider] ${this.facts.size} field facts; habits warm-started from ${steps.length} steps in ${(performance.now() - t0).toFixed(0)} ms`);
+            console.log(`[decider] ${this.facts.size} field facts, ${this.similar.size} moments; habits warm-started from ${steps.length} steps in ${(performance.now() - t0).toFixed(0)} ms`);
         }
     }
 
     /** Load the models now (and embed the facts), so the first prediction doesn't pay for it. */
     async warm(): Promise<void> {
-        await Promise.all([this.server?.start().then(() => this.model?.warm()), this.facts.prepare(null)]);
+        await Promise.all([this.server?.start().then(() => this.model?.warm()), this.facts.prepare(null), this.similar.prepare(null)]);
     }
 
     observe(h: HistEntry): void {
         const s = toPast(h);
         this.habits.observe(s);
         this.facts.observe(s);
+        this.similar.observe(s);
     }
 
     feedback(a: Action, outcome: "accepted" | "dismissed", target?: El): void {
@@ -93,6 +99,7 @@ export class LocalDecider implements Decider {
         this.preparing?.abort();
         const ctl = (this.preparing = new AbortController());
         this.facts.prepare(screen, ctl.signal).catch(() => {});
+        this.similar.prepare(screen, ctl.signal).catch(() => {});
     }
 
     private ctx(m: ModelInput): PredictContext {
@@ -106,9 +113,9 @@ export class LocalDecider implements Decider {
         return { ...top.action, confidence: top.score, source };
     }
 
-    /** Sequences, habits and field facts: all synchronous, all ~1 ms. */
+    /** Sequences, habits, field facts and similar moments elsewhere: all synchronous, all ~1 ms. */
     private fastCands(ctx: PredictContext): Candidate[] {
-        return [...this.sequence.predict(ctx), ...this.habits.predict(ctx), ...this.facts.predict(ctx)];
+        return [...this.sequence.predict(ctx), ...this.habits.predict(ctx), ...this.facts.predict(ctx), ...this.similar.predict(ctx)];
     }
 
     fast(m: ModelInput): Action | null {

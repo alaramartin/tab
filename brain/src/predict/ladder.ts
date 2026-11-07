@@ -13,7 +13,7 @@ import type { Candidate, Tier } from "./types.ts";
 export const LADDER_FILE = process.env.TAB_LADDER_FILE || join(homedir(), ".tab", "ladder.json");
 
 export const FEATURES = [
-    "bias", "habit", "pattern", "model", "model_top", "max_fast", "n_tiers", "op_type", "op_click", "op_key", "op_seq", "logit_model", "logit_habit", "model_none", "model_ran", "fact", "logit_fact",
+    "bias", "habit", "pattern", "model", "model_top", "max_fast", "n_tiers", "op_type", "op_click", "op_key", "op_seq", "logit_model", "logit_habit", "model_none", "model_ran", "fact", "logit_fact", "similar", "logit_similar",
 ] as const;
 
 const logit = (p: number) => Math.log(Math.max(1e-4, Math.min(1 - 1e-4, p)) / (1 - Math.max(1e-4, Math.min(1 - 1e-4, p))));
@@ -29,12 +29,12 @@ export interface Merged {
 }
 
 /** Fast tiers only (no model ran): the habit model's own scores are already conservative; keep them, near enough. */
-const DEFAULT_FAST: Partial<Record<(typeof FEATURES)[number], number>> = { bias: 0.3, logit_habit: 1, logit_fact: 1, pattern: 3, n_tiers: 0.3 };
+const DEFAULT_FAST: Partial<Record<(typeof FEATURES)[number], number>> = { bias: 0.3, logit_habit: 1, logit_fact: 1, logit_similar: 1, pattern: 3, n_tiers: 0.3 };
 
 /** Defaults before any fit, with the model: trust patterns, habits with evidence, the model only with agreement. */
 const DEFAULT_W: Record<(typeof FEATURES)[number], number> = {
     bias: -3, habit: 2.5, pattern: 4.5, model: 1.2, model_top: 0.4, max_fast: 0.5, n_tiers: 0.8,
-    op_type: 0, op_click: 0, op_key: -0.3, op_seq: 0.5, logit_model: 0.3, logit_habit: 0.3, model_none: -2, model_ran: 0, fact: 2, logit_fact: 0.5,
+    op_type: 0, op_click: 0, op_key: -0.3, op_seq: 0.5, logit_model: 0.3, logit_habit: 0.3, model_none: -2, model_ran: 0, fact: 2, logit_fact: 0.5, similar: 1.5, logit_similar: 0.3,
 };
 
 export class Ladder {
@@ -60,13 +60,13 @@ export class Ladder {
 
     features(by: Partial<Record<Tier, number>>, a: Action, modelRank?: number, pNone?: number): number[] {
         // A sequence (next row, fill the rest) counts as pattern evidence.
-        const habit = by.habit ?? 0, pattern = Math.max(by.pattern ?? 0, by.sequence ?? 0), model = by.model ?? 0, fact = by.fact ?? 0;
+        const habit = by.habit ?? 0, pattern = Math.max(by.pattern ?? 0, by.sequence ?? 0), model = by.model ?? 0, fact = by.fact ?? 0, similar = by.similar ?? 0;
         const tiers = Object.values(by).filter((v) => (v ?? 0) > 0).length;
         return [
-            1, habit, pattern, model, modelRank === 0 ? 1 : 0, Math.max(habit, pattern, fact), tiers,
+            1, habit, pattern, model, modelRank === 0 ? 1 : 0, Math.max(habit, pattern, fact, similar), tiers,
             a.op === "type" ? 1 : 0, a.op === "click" ? 1 : 0, a.op === "key" ? 1 : 0, a.op === "sequence" ? 1 : 0,
             model > 0 ? logit(model) : 0, habit > 0 ? logit(habit) : 0, pNone ?? 0, pNone !== undefined ? 1 : 0,
-            fact, fact > 0 ? logit(fact) : 0,
+            fact, fact > 0 ? logit(fact) : 0, similar, similar > 0 ? logit(similar) : 0,
         ];
     }
 
