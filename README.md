@@ -33,7 +33,7 @@ The full design and progress log are in [`EXTENDED_PLAN.md`](EXTENDED_PLAN.md).
 
 ## Running it
 
-Needs macOS 14+, Node 24 and Homebrew.
+Needs macOS 14+, Node 24 and Homebrew. `shell/scripts/setup.sh` does all of the below (add `--agent` to start the hub at login), and `shell/scripts/doctor.sh` checks the result.
 
 ```sh
 brew install llama.cpp
