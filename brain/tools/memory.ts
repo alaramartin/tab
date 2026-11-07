@@ -2,6 +2,9 @@
 //   npm run memory -- stats                     counts, size, steps per app
 //   npm run memory -- steps [N] [--app <id>]    the last N steps (default 30), oldest first
 //   npm run memory -- forget --app <id> | --since <ISO time or "1h"/"2d">
+//   npm run memory -- summarize [--limit N]      one-line summaries of finished episodes (local LLM), embedded
+//   npm run memory -- episodes [N]              the latest summaries
+//   npm run memory -- search <words>            episodes by meaning ("the form I filled", "pharmacy refill")
 //   npm run memory -- consolidate [--screen-days 30] [--step-days 90]   what the hub runs every 6 hours
 //   npm run memory -- import [session.jsonl ...]  seed from brain/logs/session-*.jsonl (default: all of them)
 // Env TAB_MEMORY_FILE overrides ~/.tab/memory.db.
@@ -47,6 +50,24 @@ if (cmd === "stats") {
     const s = flag("--since");
     const n = mem.forget({ app, since: s ? since(s) : undefined });
     console.log(`forgot ${n} steps${app ? ` from ${app}` : ""}${s ? ` since ${new Date(since(s)).toLocaleString()}` : ""}`);
+} else if (cmd === "summarize") {
+    const { summarizeEpisodes } = await import("../src/memory/episodes.ts");
+    const { Embedder } = await import("../src/memory/embed.ts");
+    const { LlamaServer, MODELS } = await import("../src/runtime/llama.ts");
+    const llm = new LlamaServer(MODELS[process.env.TAB_MODEL || "qwen"], 7819);
+    const emb = new Embedder(mem.db);
+    const n = await summarizeEpisodes(mem, llm, emb, { limit: Number(flag("--limit") ?? 20), now: Date.now() + 3_600_000 });
+    console.log(`summarised ${n} episodes`);
+    llm.stop();
+    emb.server?.stop();
+} else if (cmd === "episodes") {
+    for (const e of mem.episodes(Number(args[1]) || 20)) console.log(`${new Date(e.start_ts).toLocaleString()}  ${String(e.n_steps).padStart(3)} steps  ${e.app.padEnd(24).slice(0, 24)}  ${e.summary}`);
+} else if (cmd === "search") {
+    const { searchEpisodes } = await import("../src/memory/episodes.ts");
+    const { Embedder } = await import("../src/memory/embed.ts");
+    const emb = new Embedder(mem.db);
+    for (const e of await searchEpisodes(mem, emb, args.slice(1).join(" "))) console.log(`${e.sim.toFixed(2)}  ${new Date(e.start_ts).toLocaleString()}  ${e.summary}`);
+    emb.server?.stop();
 } else if (cmd === "consolidate") {
     const before = mem.stats();
     const r = mem.consolidate({ screenDays: Number(flag("--screen-days") ?? 30), stepDays: Number(flag("--step-days") ?? 90) });
@@ -83,3 +104,4 @@ if (cmd === "stats") {
     console.log("usage: npm run memory -- stats | steps [N] [--app id] | forget --app id | --since 2h | import [files]");
 }
 mem.close();
+process.exit(0); // model servers this tool started are stopped on exit

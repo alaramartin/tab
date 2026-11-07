@@ -300,6 +300,29 @@ export class Memory {
         };
     }
 
+    /** Finished episodes (no step for `quietMs`) with ≥ 3 steps and no summary yet, oldest first. */
+    episodesToSummarize(now = Date.now(), limit = 5, quietMs = 10 * 60_000): { id: number; app: string; window: string | null; steps: StepRow[] }[] {
+        const eps = this.db.prepare("SELECT id, app, window FROM episodes WHERE summary IS NULL AND n_steps >= 3 AND end_ts < ? ORDER BY id LIMIT ?").all(now - quietMs, limit) as { id: number; app: string; window: string | null }[];
+        return eps.map((e) => ({
+            ...e,
+            steps: (this.db.prepare("SELECT * FROM steps WHERE episode = ? ORDER BY ts LIMIT 40").all(e.id) as any[]).map((r) => ({ ...r, target: r.target ? JSON.parse(r.target) : null })),
+        }));
+    }
+
+    setEpisodeSummary(id: number, summary: string, vec?: Float32Array): void {
+        this.db.exec("CREATE TABLE IF NOT EXISTS episode_vecs (id INTEGER PRIMARY KEY, vec BLOB)");
+        this.db.prepare("UPDATE episodes SET summary = ? WHERE id = ?").run(summary, id);
+        if (vec) this.db.prepare("INSERT OR REPLACE INTO episode_vecs (id, vec) VALUES (?, ?)").run(id, new Uint8Array(vec.buffer));
+    }
+
+    /** Summarised episodes, newest first, with their embedding when there is one. */
+    episodes(limit = 50): { id: number; start_ts: number; end_ts: number; app: string; n_steps: number; summary: string; vec?: Float32Array }[] {
+        this.db.exec("CREATE TABLE IF NOT EXISTS episode_vecs (id INTEGER PRIMARY KEY, vec BLOB)");
+        return (this.db.prepare(
+            "SELECT e.id, e.start_ts, e.end_ts, e.app, e.n_steps, e.summary, v.vec FROM episodes e LEFT JOIN episode_vecs v ON v.id = e.id WHERE e.summary IS NOT NULL AND e.summary != '' ORDER BY e.end_ts DESC LIMIT ?",
+        ).all(limit) as any[]).map((r) => ({ ...r, vec: r.vec ? new Float32Array(r.vec.buffer.slice(r.vec.byteOffset, r.vec.byteOffset + r.vec.byteLength)) : undefined }));
+    }
+
     /**
      * The Consolidator (EXTENDED_PLAN.md §3.3), run at hub start and every few hours.
      *   screens  kept `screenDays` (30): older ones are deleted; a newer screen delta-encoded on a deleted one is

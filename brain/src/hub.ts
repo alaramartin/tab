@@ -12,6 +12,7 @@ config({ path: new URL("../../.env", import.meta.url).pathname });
 
 const PORT = Number(process.env.HUB_PORT ?? 7800);
 let shell: WebSocket | null = null;
+let lastActivity = Date.now();
 let web: WebSocket | null = null;
 const tools = new Set<WebSocket>(); // tools/send.ts and other observers see all outbound traffic
 
@@ -38,6 +39,20 @@ const consolidate = () => {
 consolidate();
 setInterval(consolidate, 6 * 3_600_000).unref();
 const decider = await makeDecider({ memory });
+
+// Episode summaries while idle: every 10 minutes, if nothing happened for 2 minutes, summarise up to 5 finished tasks.
+setInterval(async () => {
+    const d = decider as { server?: import("./runtime/llama.ts").LlamaServer | null; facts?: unknown } | null;
+    if (!memory || !d?.server || Date.now() - lastActivity < 120_000) return;
+    try {
+        const { summarizeEpisodes } = await import("./memory/episodes.ts");
+        const { Embedder } = await import("./memory/embed.ts");
+        const n = await summarizeEpisodes(memory, d.server, new Embedder(memory.db));
+        if (n) console.log(`[memory] summarised ${n} episodes`);
+    } catch (err) {
+        console.error("[memory] summaries:", (err as Error).message);
+    }
+}, 10 * 60_000).unref();
 // Load the local model in the background so the first prediction doesn't wait for it.
 (decider as { warm?: () => Promise<void> } | null)?.warm?.().then(
     () => console.log(`[decider] ${decider!.name} ready`),
@@ -75,6 +90,7 @@ wss.on("connection", (ws) => {
             console.log(`hello from ${role}`);
         }
         if (role === "tool" && (m.to === "shell" || m.to === "web") && m.msg) return out(m.to, m.msg);
+        if (m.type === "input" || m.type === "user_event") lastActivity = Date.now();
         if (role === "tool" && m.type === "reset") {
             brain.reset(!!m.keepWorkflows); // web/scripts/reset-demo.ts: history, units, counters; saved workflows unless kept
             return console.log(`hub: reset${m.keepWorkflows ? " (kept workflows)" : ""}`);
