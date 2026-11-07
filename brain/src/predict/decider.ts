@@ -45,7 +45,11 @@ export class LocalDecider implements Decider {
             console.warn(`[decider] ${this.server.path} missing: habits only (download it to ~/.tab/models)`);
             this.server = null as any;
         }
-        this.model = this.server ? new LocalModelTier(this.server) : null;
+        const memory = opts.memory ?? null;
+        // Long-range context for the model: what the user finished in this app lately (episode summaries, ≤ 2, last 24 h).
+        const earlier = (ctx: PredictContext) =>
+            memory?.episodes(20).filter((e) => e.app === ctx.active.app && ctx.now - e.end_ts < 86_400_000).slice(0, 2).map((e) => e.summary) ?? [];
+        this.model = this.server ? new LocalModelTier(this.server, { earlier }) : null;
         const embedder = opts.embed === false ? null : new Embedder(opts.memory?.db ?? null);
         this.embedder = embedder?.available ? embedder : null;
         this.facts = new FactIndex(this.embedder);

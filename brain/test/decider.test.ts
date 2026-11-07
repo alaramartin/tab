@@ -96,3 +96,12 @@ test("paused: no ghosts", async () => {
     await b.predictNow();
     assert.ok(!shell.some((m) => m.type === "ghost"));
 });
+
+test("the model's prompt includes what the user finished in this app lately", async () => {
+    const { LocalModelTier } = await import("../src/predict/local.ts");
+    const tier = new LocalModelTier({ spec: { family: "qwen3" } } as any, { earlier: () => ["Archived three newsletters in Inbox"] });
+    const { prompt } = tier.buildPrompt({ now: Date.now(), active: mail(Date.now()), recent: [], history: [] });
+    assert.match(prompt, /Earlier in this app:\n- Archived three newsletters in Inbox\n/);
+    const plain = new LocalModelTier({ spec: { family: "qwen3" } } as any).buildPrompt({ now: Date.now(), active: mail(Date.now()), recent: [], history: [] });
+    assert.doesNotMatch(plain.prompt, /Earlier in this app/);
+});

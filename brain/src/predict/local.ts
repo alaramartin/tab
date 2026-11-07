@@ -19,7 +19,7 @@ export class LocalModelTier implements Predictor {
 
     constructor(
         private server: LlamaServer,
-        private opts: { maxOptions?: number; screenLines?: number } = {},
+        private opts: { maxOptions?: number; screenLines?: number; earlier?: (ctx: PredictContext) => string[] } = {},
     ) {}
 
     /** One throwaway request with the fixed instructions: compiles the GPU kernels and caches the prompt prefix. */
@@ -34,12 +34,13 @@ export class LocalModelTier implements Predictor {
         const screen = screenLines(s, this.opts.screenLines ?? 28);
         const hist = historyLines(ctx.history, ctx.now);
         const other = otherScreenLines(ctx.recent, s);
+        const earlier = this.opts.earlier?.(ctx) ?? [];
         const options = [...actions.map((a) => a.label), "None of these"];
         const user = `${head}\nScreen (top to bottom):\n${screen.map((l) => `- ${l}`).join("\n")}\n${
             other.length ? `\nPreviously seen screen, ${other[0]}:\n${other.slice(1).map((l) => `- ${l}`).join("\n")}\n` : ""
         }\nRecent actions (oldest first):\n${
             hist.length ? hist.map((l) => `- ${l}`).join("\n") : "- none"
-        }\n\nWhat will they do next?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
+        }\n${earlier.length ? `\nEarlier in this app:\n${earlier.map((l) => `- ${l}`).join("\n")}\n` : ""}\nWhat will they do next?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
         return { actions, prompt: chatPrompt(this.server.spec.family ?? "lfm", SYSTEM, user), n: options.length };
     }
 
