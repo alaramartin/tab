@@ -39,16 +39,16 @@ function since(s: string): number {
     return m ? Date.now() - Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"] : Date.parse(s);
 }
 
-/** The pre-v2 pattern engine (repeat-what-you-did on web lists) behind the Predictor interface. */
+/** The pattern engine (teach once, then repeat) behind the Predictor interface. */
 class PatternTier implements Predictor {
     readonly tier = "pattern" as const;
     private eng = new PatternEngine();
     predict(ctx: PredictContext): Candidate[] {
         const h: HistEntry[] = ctx.history.map((s) => ({
-            op: s.op, app: s.app, url: s.url, value: s.value, ts: s.ts, by: s.by,
+            op: s.op, app: s.app, url: s.url, window: s.window, value: s.value, ts: s.ts, by: s.by,
             target: s.target ? { id: s.target.id, path: s.target.path, role: s.target.role, label: s.target.label, list: s.target.list } : undefined,
         }));
-        const a = this.eng.predict(h, [ctx.active, ...ctx.recent], ctx.now) ?? this.eng.recall(ctx.active, [ctx.active, ...ctx.recent], ctx.now, h);
+        const a = this.eng.predict(h, [ctx.active, ...ctx.recent], ctx.now) ?? this.eng.recall(ctx.active, [ctx.active, ...ctx.recent], ctx.now, h, ctx.now);
         return a ? [{ action: a, score: a.confidence, tier: "pattern", why: a.label }] : [];
     }
 }
@@ -108,7 +108,7 @@ function stateOf(hash: string): ScreenState | null {
     if (hit) return hit;
     const s = mem.snapshot(hash);
     if (!s) return null;
-    const st: ScreenState = { type: "state", source: s.source, app: s.app, window: s.window, ...(s.url ? { url: s.url } : {}), focused: true, elements: expandEls(s.els), seq: 0, ts: 0 };
+    const st: ScreenState = { type: "state", app: s.app, window: s.window, ...(s.url ? { url: s.url } : {}), elements: expandEls(s.els), seq: 0, ts: 0 };
     if (snapCache.size > 2000) snapCache.clear();
     snapCache.set(hash, st);
     return st;
@@ -124,7 +124,7 @@ for (const r of rows) {
         const st = stateOf(sc.hash);
         if (!st) continue;
         st.ts = sc.first_ts;
-        const place = st.source === "web" && sc.url ? `web:${sc.url}` : sc.app;
+        const place = `${sc.app}|${st.window}`;
         recentByPlace.delete(place); // re-insert: the map stays in last-seen order
         recentByPlace.set(place, st);
     }

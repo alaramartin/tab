@@ -39,7 +39,7 @@ struct Style {
     static let doneFill: UInt32 = 0x248A3D
     static let doneStroke: UInt32 = 0x34C759
     static let yellow: UInt32 = 0xFFD60A
-    /// Suggestions (action/text) are bright red by default (human's call, 14:40: the graphite read as grey).
+    /// Suggestions (action/text) are bright red.
     static let suggest: UInt32 = 0xFF3B30
     static let blockDark: UInt32 = 0x2A0A0C // Blocked moves to a dark pill with a red edge, so it doesn't look like a suggestion
 
@@ -48,7 +48,7 @@ struct Style {
     // Box
     // Normal mode is a quiet outline that hugs the element (you notice it, it doesn't pop); HC stays loud on purpose.
     var boxOutset: CGFloat { hc ? 5 : 2 }
-    /// The element's corner radius when the hub doesn't send one (an older web/hub).
+    /// The highlight's corner radius.
     static let fallbackRadius: CGFloat = 6
     func boxStroke(_ kind: GhostKind) -> CGFloat { hc ? 4 : (kind == .action || kind == .text || kind == .blocked ? 2.5 : 1.5) }
     var hcRing: CGFloat { 1.5 }
@@ -103,7 +103,7 @@ struct Style {
 
     /// (color, width) of the inner border: a hairline in normal mode, 2 pt in HC.
     func pillBorder(_ kind: GhostKind) -> (NSColor, CGFloat) {
-        // Pay gets a stronger hairline: Base blue must keep an edge on blue pages (C's tickets site is royal blue).
+        // Pay gets a stronger hairline: its blue must keep an edge on blue pages.
         if !hc { return kind == .blocked ? (hex(Style.blockStroke), 2) : (NSColor.white.withAlphaComponent(kind == .pay ? 0.55 : 0.30), 1) }
         switch kind {
         case .action, .text, .pay: return (hex(Style.yellow), 2)
@@ -158,8 +158,8 @@ struct PillContent {
         if g.kind == .done, label.hasSuffix("✓") { label = String(label.dropLast()).trimmingCharacters(in: .whitespaces) }
         if g.kind == .done { icon = .check }
         if g.kind == .blocked { icon = .block }
-        // The pattern rule's ghosts (PLAN pill formats) get a loop: "teach once, then repeat" at a glance. "Do all " is a
-        // saved workflow recalled on a later visit (B's `PatternEngine.recall`): the same unit, so the same loop.
+        // Repeats of a chore taught once get a loop icon: "Repeat for", "Do the remaining", and "Do all" (a chore learned
+        // earlier, offered for a whole list).
         if g.kind == .action, ["Repeat for ", "Do the remaining ", "Do all "].contains(where: label.hasPrefix) { icon = .repeat_ }
         // Overlay's own state after Tab on a pay ghost (not a hub label): a spinner in the icon slot, and no keycap.
         if g.kind == .pay, label.hasPrefix("Paying") { icon = .spinner }
@@ -440,7 +440,7 @@ final class GhostView: NSView {
 
     // MARK: layout
 
-    /// Textareas only: real single-line inputs run up to ~56 pt tall (C's pharmacy field is 46).
+    /// Textareas only: single-line inputs run up to ~56 pt tall.
     private var isMultiline: Bool { (ghost.rect?.h ?? 0) >= 64 }
 
     private var ghostTextFont: NSFont {
@@ -458,10 +458,10 @@ final class GhostView: NSView {
         return CGRect(x: r.x - o, y: r.y - o, width: r.w + 2 * o, height: r.h + 2 * o)
     }
 
-    /// The element's own corner radius (from the page's CSS), capped at a capsule.
+    /// The highlight's corner radius, capped at a capsule.
     private var elementRadius: CGFloat {
         let r = ghost.rect.map { CGFloat(min($0.w, $0.h)) / 2 } ?? .greatestFiniteMagnitude
-        return min(ghost.radius.map { CGFloat($0) } ?? Style.fallbackRadius, r)
+        return min(Style.fallbackRadius, r)
     }
 
     /// The box's corner radius: concentric with the element's (its radius + the outset), so square buttons get a square
@@ -509,8 +509,8 @@ final class GhostView: NSView {
             case "inside":
                 p = inside(r, size)
                 docked = true
-            // Not for pay/blocked: they end the flow, and what sits above their button is the amount they quote (Total,
-            // Copay). Scored, the HC Blocked pill docked inside resale's Buy button, hiding it; below covers fine print.
+            // Not for pay/blocked: what sits above their button is usually the amount they quote (Total), and docking
+            // inside would hide the button; below covers only fine print.
             case nil where !(ghost.avoid ?? []).isEmpty && ghost.kind != .pay && ghost.kind != .blocked:
                 p = leastCovering(b, r, size, above: above, right: right)
                 docked = p == inside(r, size)
@@ -534,8 +534,7 @@ final class GhostView: NSView {
     }
 
     /// The pill's widest: the usable screen, and for an explicit `inside` the field itself, so a long label gives way
-    /// (tail first) instead of spilling past the field's edges ("Do all 6 from v1.4.0 · learned…" in HC on the
-    /// tracker's 425 pt search box).
+    /// (tail first) instead of spilling past the field's edges.
     static func pillCap(_ g: Ghost, _ style: Style, _ usable: CGRect) -> CGFloat {
         let screen = usable.width - 2 * style.clamp
         guard g.place == "inside", g.kind != .text, let r = g.rect else { return screen }
@@ -691,9 +690,9 @@ final class Overlay {
     private var holdTimer: Timer?
     var highContrast: Bool
     private(set) var current: Ghost?
-    /// After Tab on a pay ghost: "Paying $0.30 · tickets.localhost" with a spinner, until the hub's next ghost (Paid ✓
-    /// or Blocked), a hide, or `payingTimeout`. The hub sends nothing while the payment settles (9.6 s on venue wifi),
-    /// and a blank screen at the moment money moves reads as a hang. Not `current`: Tab and Esc pass through meanwhile.
+    /// After Tab on a pay ghost: "Paying $0.30 · example.com" with a spinner, until the hub's next ghost (Paid ✓ or
+    /// Blocked), a hide, or `payingTimeout`. Settling takes seconds, and a blank screen at the moment money moves reads
+    /// as a hang. Not `current`: Tab and Esc pass through meanwhile.
     private var paying: (ghost: Ghost, appear: DispatchWorkItem, timeout: DispatchWorkItem, spin: Timer)?
     static var payingTimeout: Double = 45
     var isPaying: Bool { paying != nil }

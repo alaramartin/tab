@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tab v2 setup: llama.cpp, the local models, the brain's packages, TabShell.app.
+# Tab setup: llama.cpp, the local models, the brain's packages, TabShell.app.
 #   shell/scripts/setup.sh            install what's missing (models ~2.6 GB in ~/.tab/models)
 #   shell/scripts/setup.sh --agent    also start the hub at login (a LaunchAgent, dev.tab.hub)
 # Re-running is safe: only missing pieces are fetched. Then: grant TabShell Accessibility and Screen Recording.

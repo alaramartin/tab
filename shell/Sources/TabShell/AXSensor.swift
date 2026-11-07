@@ -1,5 +1,5 @@
 // Universal perception: the focused window of whatever app is frontmost, read through Accessibility.
-// No per-app code. Snapshots are triggered by AXObserver notifications (focus, value, window, layout changes),
+// Snapshots are triggered by AXObserver notifications (focus, value, window, layout changes),
 // with a slow poll as a fallback, and run on a background queue with a 0.25 s messaging timeout.
 //
 // Privacy at the source: secure text fields report no value, denylisted apps (password managers, plus
@@ -221,7 +221,10 @@ enum AXSensor {
         var maxText = 80 // static text is context, not a target: cap it so it can't crowd out controls
     }
 
-    struct Node { let el: AXUIElement; let info: AXInfo; let path: String; let section: String?; let depth: Int; var cell: GridRef? = nil }
+    /// An item of a repeated structure: the list (or table) it's in, and which item.
+    struct ListPos { let key: String; let index: Int }
+    struct Node { let el: AXUIElement; let info: AXInfo; let path: String; let section: String?; let depth: Int; var cell: GridRef? = nil; var item: ListPos? = nil }
+    static let listRoles: Set<String> = ["AXTable", "AXOutline", "AXList", "AXGrid"]
 
     /// Walk the focused window breadth-first (top of the window first), pruning subtrees that lie outside it.
     /// `visit` returns false to stop. Paths are computed the same way for snapshots and for exec lookups.
@@ -233,14 +236,15 @@ enum AXSensor {
         // Attributes are fetched when a node is dequeued, so nodes past the budget cost nothing.
         // Two queues: page content (anything inside an AXWebArea) is visited before the browser's own chrome, so when the
         // time budget runs out on a big page, it's toolbar buttons that are lost, not the page.
-        var queue: [(AXUIElement, String?, Int, GridRef?)] = winInfo.children.map { ($0, nil, 1, nil) }
-        var prio: [(AXUIElement, String?, Int, GridRef?)] = []
+        typealias Q = (el: AXUIElement, section: String?, depth: Int, cell: GridRef?, item: ListPos?, listKey: String?, childIndex: Int)
+        var queue: [Q] = winInfo.children.enumerated().map { ($0.element, nil, 1, nil, nil, nil, $0.offset) }
+        var prio: [Q] = []
         var head = 0, pHead = 0, visited = 0
         let t0 = CFAbsoluteTimeGetCurrent()
         while pHead < prio.count || head < queue.count {
             if visited >= limits.maxNodes || (CFAbsoluteTimeGetCurrent() - t0) * 1000 > limits.budgetMs { break }
             let inPage = pHead < prio.count
-            let (el, section, depth, inCell) = inPage ? prio[pHead] : queue[head]
+            let (el, section, depth, inCell, inItem, parentList, childIndex) = inPage ? prio[pHead] : queue[head]
             if inPage { pHead += 1 } else { head += 1 }
             visited += 1
             let info = AXInfo(el)
@@ -251,14 +255,22 @@ enum AXSensor {
             let path = n == 0 ? base : "\(base)#\(n)"
             // Controls inside a table cell (an editable field, a checkbox) take the cell's row and column.
             let cell = info.role == "AXCell" ? grid(el, info) : inCell
-            if !visit(Node(el: el, info: info, path: path, section: section, depth: depth, cell: cell)) { return }
+            // A direct child of a list or table starts an item (rows by their row index); everything inside belongs to it.
+            var item = inItem
+            if let key = parentList, info.role != "AXColumn", !(info.role == "AXGroup" && info.subrole == "AXTableHeaderView") {
+                let row: Int? = info.role == "AXRow" ? grid(el, info)?.row : nil
+                item = ListPos(key: key, index: row ?? childIndex)
+            }
+            if !visit(Node(el: el, info: info, path: path, section: section, depth: depth, cell: cell, item: item)) { return }
+            let childList: String? = listRoles.contains(info.role) ? path : nil
             // A labelled container, or a heading, names the section its descendants belong to.
             var childSection = section
             if sectionRoles.contains(info.role), !info.label.isEmpty { childSection = String(info.label.prefix(60)) }
             if depth < 40 {
                 let toPage = inPage || info.role == "AXWebArea"
-                for c in info.children {
-                    if toPage { prio.append((c, childSection, depth + 1, cell)) } else { queue.append((c, childSection, depth + 1, cell)) }
+                for (i, c) in info.children.enumerated() {
+                    let q: Q = (c, childSection, depth + 1, cell, childList == nil ? item : nil, childList, i)
+                    if toPage { prio.append(q) } else { queue.append(q) }
                 }
             }
         }
@@ -353,6 +365,8 @@ enum AXSensor {
         e.focused = i.focused ? true : nil
         e.secure = secure ? true : nil
         if role == "cell" || role == "row" { e.grid = grid(n.el, i) } else if let c = n.cell { e.grid = c }
+        // Which field of the item this is (same across items): role and column.
+        if let it = n.item { e.list = ListRef(key: it.key, index: it.index, field: "\(role)@\(e.grid?.col.map { String($0) } ?? "-")") }
         if i.focused, role == "textfield" || role == "textarea" { e.caret = caret(n.el) }
         return e
     }
@@ -380,7 +394,7 @@ enum AXSensor {
         if let fi = controls.firstIndex(where: { $0.0.focused == true }), fi > 0 { controls.insert(controls.remove(at: fi), at: 0) }
         let all = Array((controls + texts).prefix(limits.maxEls))
         let title = (AX.attr(w, kAXTitleAttribute) as String?) ?? ""
-        var st = ScreenState(source: "ax", app: bundleId, window: title, url: url, focused: true, elements: all.map(\.0), seq: seq, ts: nowMs())
+        var st = ScreenState(app: bundleId, window: title, url: url, elements: all.map(\.0), seq: seq, ts: nowMs())
         st.nodes = nodes
         return (st, all.map(\.1))
     }

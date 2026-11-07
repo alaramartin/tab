@@ -3,7 +3,6 @@
 //   TabShell                       run (connects to ws://127.0.0.1:7800)
 //   TabShell --selftest            draw every ghost kind at fixed rects, normal and high contrast
 //   TabShell --tap-selftest        check the Tab/Esc/hold rules on synthetic events (no permissions needed)
-//   TabShell --render-reveal out.png   the end-of-demo reveal card, offscreen
 //   TabShell --render out.png      render the selftest ghosts offscreen to a PNG (no permissions needed); --bg img.png, --dark,
 //                                  --size WxH (points), --ghosts file.json ([{ghost, hc}] instead of the selftest layout)
 //   TabShell --ax-dump [bundleId]  print the frontmost (or given) app's AX snapshot as JSON
@@ -88,7 +87,6 @@ if let json = flagValue("--exec") {
 final class Shell: NSObject, InputTapDelegate {
     let overlay: Overlay
     let hud: HUD
-    let reveal = Reveal()
     private var hubConnected = false
     let tap = InputTap()
     let hub: HubClient
@@ -161,7 +159,6 @@ final class Shell: NSObject, InputTapDelegate {
         let reset = NSMenuItem(title: "Reset HUD Position", action: #selector(resetHud), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
-        // High Contrast menu item removed (human's call, 14:40): suggestions are bright red by default instead.
         let pause = NSMenuItem(title: "Pause Tab", action: #selector(togglePause), keyEquivalent: "")
         pause.target = self
         menu.addItem(pause)
@@ -170,9 +167,6 @@ final class Shell: NSObject, InputTapDelegate {
         forget.target = self
         menu.addItem(forget)
         menu.addItem(.separator())
-        let rv = NSMenuItem(title: "Reveal Totals", action: #selector(revealTotals), keyEquivalent: "")
-        rv.target = self
-        menu.addItem(rv)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit TabShell", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -202,7 +196,6 @@ final class Shell: NSObject, InputTapDelegate {
 
     @objc private func toggleContrast() { hudClicked("contrast") }
 
-    @objc private func revealTotals() { hudClicked("reveal") }
 
     @objc private func togglePause() {
         paused.toggle()
@@ -305,28 +298,26 @@ final class Shell: NSObject, InputTapDelegate {
     }
 
     private func hudClicked(_ item: String) {
-        if item == "reveal" { // local only: the hub has nothing to do with it
-            if reveal.isVisible { reveal.hide() } else { reveal.show(lastHud, connected: hubConnected, on: hud.panel.screen) }
-            return
-        }
-        reveal.hide()
-        if item == "contrast" {
+        switch item {
+        case "contrast":
             overlay.highContrast.toggle()
             hud.setHighContrast(overlay.highContrast)
             overlay.redraw()
             refreshMenu()
+        case "ledger":
+            if let u = lastHud.lastTx.flatMap({ URL(string: $0.explorerUrl) }) { NSWorkspace.shared.open(u) }
+        default:
+            break
         }
-        hub.send(.hudClick(item: item))
     }
 
     // MARK: InputTapDelegate
 
     var visibleGhost: Ghost? { overlay.current }
     var paymentSettling: Bool { overlay.isPaying }
-    var ownRects: [CGRect] { [hud.screenRect, reveal.screenRect] }
+    var ownRects: [CGRect] { [hud.screenRect] }
 
     func tapAccept(_ g: Ghost) {
-        reveal.hide() // never act on a ghost the reveal card is covering without showing what happens
         guard overlay.current?.id == g.id else { return }
         log("accept \(g.id)")
         overlay.hide(.accept)
@@ -334,19 +325,16 @@ final class Shell: NSObject, InputTapDelegate {
     }
 
     func tapDismiss(_ g: Ghost) {
-        reveal.hide()
         log("dismiss \(g.id)")
         if overlay.current?.id == g.id { overlay.hide() }
         hub.send(.dismiss(ghostId: g.id))
     }
 
     func tapBlockedPress(_ g: Ghost) {
-        reveal.hide()
         overlay.shake()
     }
 
     func tapOtherInput(kind: String, report: Bool) {
-        reveal.hide() // any key or click outside it closes the reveal
         if let g = overlay.current, g.kind != .done { overlay.hide() }
         if report { hub.send(.input(kind: kind)) }
     }
@@ -424,7 +412,7 @@ func selftestGhosts(screen: CGSize) -> [(Ghost, Bool)] {
         out.append((Ghost(id: "\(tag)-textarea", kind: .text, label: "⇥", rect: r,
                           ghostText: "Fix checkout rounding. Totals were rounded per line item instead of once at the end, so 2 × $0.15 could show $0.31."), hc))
         r = Rect(x: 0, y: next(), w: 140, h: h); r.x = x0
-        out.append((Ghost(id: "\(tag)-pay", kind: .pay, label: "Pay $0.30 · tickets.localhost ⇥", rect: r), hc))
+        out.append((Ghost(id: "\(tag)-pay", kind: .pay, label: "Pay $0.30 · example.com ⇥", rect: r), hc))
         r = Rect(x: 0, y: next(), w: 140, h: h); r.x = x0
         out.append((Ghost(id: "\(tag)-blocked", kind: .blocked, label: "Blocked · page says $0.30, payment asks $0.51", rect: r), hc))
         r = Rect(x: 0, y: next(), w: 140, h: h); r.x = x0
@@ -502,30 +490,32 @@ func renderHUD(to out: String) {
         ("idle, fresh start", true, false, nil, Hud(mode: "idle", modelCalls: 0, shown: 0, accepted: 0, tabDid: TabDid(clicks: 0, keys: 0), youDid: 0)),
         ("predicting", true, false, nil, Hud(mode: "predicting", lastSource: "model", lastLatencyMs: 212, modelCalls: 3, shown: 3, accepted: 2,
                                              tabDid: TabDid(clicks: 3, keys: 0), youDid: 5)),
-        ("flow 1: just paid", true, false,
+        ("just paid", true, false,
          Hud(mode: "running", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 2, keys: 0), youDid: 6),
          Hud(mode: "shown", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 3, keys: 0), youDid: 7, lastTx: tx)),
-        ("flow 3: pattern repeat", true, false, nil,
+        ("a repeat", true, false, nil,
          Hud(mode: "shown", lastSource: "pattern", lastLatencyMs: 2, modelCalls: 6, shown: 8, accepted: 7, tabDid: TabDid(clicks: 9, keys: 131), youDid: 61, lastTx: tx)),
         ("running, <1 ms", true, false, nil,
          Hud(mode: "running", lastSource: "pattern", lastLatencyMs: 0, modelCalls: 6, shown: 9, accepted: 8, tabDid: TabDid(clicks: 14, keys: 150), youDid: 64, lastTx: tx)),
-        ("reveal, high contrast", true, true, nil,
+        ("high contrast", true, true, nil,
          Hud(mode: "idle", lastSource: "model", lastLatencyMs: 640, modelCalls: 9, shown: 16, accepted: 15, tabDid: TabDid(clicks: 31, keys: 168), youDid: 72,
              lastTx: LastTx(hash: tx.hash, explorerUrl: tx.explorerUrl, amountUsd: "0.05"))),
         ("stress", true, false, nil,
          Hud(mode: "predicting", lastSource: "pattern", lastLatencyMs: 1234, modelCalls: 99, shown: 99, accepted: 99, tabDid: TabDid(clicks: 480, keys: 754),
              youDid: 9999, lastTx: LastTx(hash: tx.hash, explorerUrl: tx.explorerUrl, amountUsd: "1234.56"))),
     ]
-    let s = HUDView.size
+    let s = HUDView.size(expanded: true)
     let gap: CGFloat = 48, cols = 4
     let rows = (states.count + cols - 1) / cols
     let root = BackgroundView(frame: CGRect(x: 0, y: 0, width: CGFloat(cols) * (s.width + gap) + gap, height: CGFloat(rows) * (s.height + gap) + gap))
     root.dark = args.contains("--dark")
     for (i, (name, connected, hc, before, h)) in states.enumerated() {
         let o = CGPoint(x: gap + CGFloat(i % cols) * (s.width + gap), y: gap + CGFloat(i / cols) * (s.height + gap))
-        let m = HUDShadowView.margin
-        root.addSubview(HUDShadowView(frame: CGRect(x: o.x - m, y: o.y - m, width: s.width + 2 * m, height: s.height + 2 * m)))
-        let v = HUDView(frame: CGRect(origin: o, size: s))
+        let open = i % 2 == 1 // every other one with the breakdown open
+        let vs = HUDView.size(expanded: open)
+        root.addSubview(HUDShadowView(frame: CGRect(x: o.x - HUDShadowView.margin, y: o.y - HUDShadowView.margin, width: vs.width + 2 * HUDShadowView.margin, height: vs.height + 2 * HUDShadowView.margin)))
+        let v = HUDView(frame: CGRect(origin: o, size: vs))
+        v.expanded = open
         v.connected = connected
         if let before { v.hud = before }
         v.hud = h
@@ -549,11 +539,6 @@ if args.contains("--tap-selftest") { runTapSelftest() }
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-if let out = flagValue("--render-reveal") {
-    Reveal.render(Hud(mode: "idle", lastSource: "pattern", lastLatencyMs: 1.9, modelCalls: 9, shown: 16, accepted: 15,
-                      tabDid: TabDid(clicks: 31, keys: 168), youDid: 22), to: out)
-    exit(0)
-}
 if let out = flagValue("--render-hud") {
     renderHUD(to: out)
     exit(0)

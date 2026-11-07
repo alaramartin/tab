@@ -1,34 +1,41 @@
-// Websocket hub on 127.0.0.1:7800. A (role 'shell') and C (role 'web') connect and say hello.
+// The hub: a websocket server on 127.0.0.1 (local only). TabShell connects as "shell", a payment detector as
+// "payments", and dev tools (tools/send.ts) as anything else.
+//   env TAB_DEBUG=1   message contents (ghost labels, typed values) and timings in the console; off: types only
+//   env TAB_MEMORY=off   predict without saving anything to disk
+//   env TAB_LLM=off   fast tiers only, no local LLM
 import { config } from "dotenv";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { HubToShell, HubToWeb } from "../../protocol/types.ts";
+import type { HubToDetector, HubToShell } from "../../protocol/types.ts";
 import { Brain } from "./brain.ts";
 import { makeDecider } from "./model.ts";
-import { DEFAULT_WORKFLOWS_FILE } from "./pattern.ts";
 import { DEFAULT_MEMORY_FILE, Memory } from "./memory/store.ts";
+import { record } from "./pay/ledger.ts";
 import { IconNamer } from "./runtime/icons.ts";
+import type { LlamaServer } from "./runtime/llama.ts";
 
-config({ path: new URL("../../.env", import.meta.url).pathname });
+config({ path: new URL("../../.env", import.meta.url).pathname, quiet: true });
 
 const PORT = Number(process.env.HUB_PORT ?? 7800);
-// TAB_DEBUG=1: message contents (ghost labels, typed values) and timings in the console. Off: message types only.
 const DEBUG = !!process.env.TAB_DEBUG;
+type Role = "shell" | "payments" | "tool";
 let shell: WebSocket | null = null;
+let payments: WebSocket | null = null;
 let lastActivity = Date.now();
-let web: WebSocket | null = null;
-const tools = new Set<WebSocket>(); // tools/send.ts and other observers see all outbound traffic
+const tools = new Set<WebSocket>(); // dev tools see all outbound traffic
 
-function out(to: "shell" | "web", m: HubToShell | HubToWeb): void {
+function out(to: "shell" | "payments", m: HubToShell | HubToDetector): void {
     const s = JSON.stringify(m);
-    const ws = to === "shell" ? shell : web;
+    const ws = to === "shell" ? shell : payments;
     if (ws && ws.readyState === ws.OPEN) ws.send(s);
     for (const t of tools) if (t.readyState === t.OPEN) t.send(JSON.stringify({ to, msg: m }));
-    if (DEBUG && m.type !== "hud") console.log(`[trace] ${Date.now()} → ${to} ${m.type}`);
-    if (m.type !== "hud") console.log(DEBUG ? `→ ${to} ${s.length > 200 ? s.slice(0, 200) + "…" : s}` : `→ ${to} ${m.type}`);
+    if (m.type === "hud") return;
+    if (DEBUG) console.log(`[trace] ${Date.now()} → ${to} ${m.type}`);
+    console.log(DEBUG ? `→ ${to} ${s.length > 200 ? s.slice(0, 200) + "…" : s}` : `→ ${to} ${m.type}`);
 }
 
 const memoryFile = process.env.TAB_MEMORY_FILE || DEFAULT_MEMORY_FILE;
 const memory = process.env.TAB_MEMORY === "off" ? null : new Memory(memoryFile);
+
 // Consolidate memory (old screens out, deltas re-keyed) at start and every 6 hours.
 const consolidate = () => {
     if (!memory) return;
@@ -41,43 +48,43 @@ const consolidate = () => {
 };
 consolidate();
 setInterval(consolidate, 6 * 3_600_000).unref();
+
 const decider = await makeDecider({ memory });
+// Load the local model in the background so the first prediction doesn't wait for it.
+(decider as { warm?: () => Promise<void> }).warm?.().then(
+    () => console.log(`[decider] ${decider.name} ready`),
+    (err: Error) => console.error(`[decider] model failed to start: ${err.message}`),
+);
 
 // Episode summaries while idle: every 10 minutes, if nothing happened for 2 minutes, summarise up to 5 finished tasks.
 setInterval(async () => {
-    const d = decider as { server?: import("./runtime/llama.ts").LlamaServer | null; facts?: unknown } | null;
-    if (!memory || !d?.server || Date.now() - lastActivity < 120_000) return;
+    const llm = (decider as { server?: LlamaServer | null }).server;
+    if (!memory || !llm || Date.now() - lastActivity < 120_000) return;
     try {
         const { summarizeEpisodes } = await import("./memory/episodes.ts");
         const { Embedder } = await import("./memory/embed.ts");
-        const n = await summarizeEpisodes(memory, d.server, new Embedder(memory.db));
+        const n = await summarizeEpisodes(memory, llm, new Embedder(memory.db));
         if (n) console.log(`[memory] summarised ${n} episodes`);
     } catch (err) {
         console.error("[memory] summaries:", (err as Error).message);
     }
 }, 10 * 60_000).unref();
-// Load the local model in the background so the first prediction doesn't wait for it.
-(decider as { warm?: () => Promise<void> } | null)?.warm?.().then(
-    () => console.log(`[decider] ${decider!.name} ready`),
-    (err: Error) => console.error(`[decider] model failed to start: ${err.message}`),
-);
+
+const namer = new IconNamer();
 const brain = new Brain({
     sendShell: (m) => out("shell", m),
-    sendWeb: (m) => out("web", m),
+    sendDetector: (m) => out("payments", m),
     decider,
-    workflowsFile: process.env.TAB_WORKFLOWS_FILE || DEFAULT_WORKFLOWS_FILE,
     memory,
-    nameIcons: (() => {
-        const namer = new IconNamer();
-        return namer.server ? (items: { hash: string; png: string }[]) => namer.name(items) : undefined;
-    })(),
+    nameIcons: namer.server ? (items) => namer.name(items) : undefined,
+    recordPayment: record,
     onPredict: ({ source, latencyMs, action }) =>
         console.log(`[predict] ${source} ${latencyMs.toFixed(1)} ms → ${action ? `${DEBUG ? action.label : action.op} (${action.confidence.toFixed(2)})` : "none"}`),
 });
 
 const wss = new WebSocketServer({ host: "127.0.0.1", port: PORT });
 wss.on("connection", (ws) => {
-    let role: "shell" | "web" | "tool" | null = null;
+    let role: Role | null = null;
     ws.on("message", (data) => {
         let m: any;
         try {
@@ -86,36 +93,32 @@ wss.on("connection", (ws) => {
             return console.error("bad json:", String(data).slice(0, 100));
         }
         if (m.type === "hello") {
-            role = m.role === "shell" ? "shell" : m.role === "web" ? "web" : "tool";
+            role = m.role === "shell" ? "shell" : m.role === "payments" ? "payments" : "tool";
             if (role === "shell") shell = ws;
-            else if (role === "web") web = ws;
+            else if (role === "payments") payments = ws;
             else tools.add(ws);
             console.log(`hello from ${role}`);
         }
-        if (role === "tool" && (m.to === "shell" || m.to === "web") && m.msg) return out(m.to, m.msg);
+        // Dev tools can deliver a message to either side ({"to": …, "msg": …}) or speak as one ({"as": …, …}).
+        if (role === "tool" && (m.to === "shell" || m.to === "payments") && m.msg) return out(m.to, m.msg);
         if (m.type === "input" || m.type === "user_event") lastActivity = Date.now();
         if (DEBUG) console.log(`[trace] ${Date.now()} ← ${role} ${m.type}${m.kind ? ` ${m.kind}` : ""}${m.type === "state" ? ` ${m.app} ${m.elements?.length} els` : ""}`);
-        if (role === "tool" && m.type === "reset") {
-            brain.reset(!!m.keepWorkflows); // web/scripts/reset-demo.ts: history, units, counters; saved workflows unless kept
-            return console.log(`hub: reset${m.keepWorkflows ? " (kept workflows)" : ""}`);
-        }
-        // Tools can impersonate either side: {"as":"shell"|"web", ...msg}
-        const from = role === "tool" ? m.as ?? "web" : role;
+        const from = role === "tool" ? (m.as ?? "shell") : role;
         if (m.type !== "state" && m.type !== "user_event" && m.type !== "icon_request") console.log(DEBUG ? `← ${from} ${String(data).slice(0, 200)}` : `← ${from} ${m.type}`);
         try {
             if (from === "shell") brain.fromShell(m);
-            else if (from === "web") brain.fromWeb(m);
+            else if (from === "payments") brain.fromDetector(m);
         } catch (err) {
             console.error(`[hub] error handling ${m.type}:`, err);
         }
     });
     ws.on("close", () => {
         if (ws === shell) shell = null;
-        if (ws === web) web = null;
+        if (ws === payments) payments = null;
         tools.delete(ws);
         console.log(`${role ?? "client"} disconnected`);
     });
 });
 
-console.log(`hub listening on ws://127.0.0.1:${PORT} · model: ${decider?.name ?? "none"} · memory: ${memory ? memoryFile : "off"}`);
+console.log(`hub listening on ws://127.0.0.1:${PORT} · ${decider.name} · memory: ${memory ? memoryFile : "off"}`);
 process.on("unhandledRejection", (err) => console.error("[hub] unhandled:", err));

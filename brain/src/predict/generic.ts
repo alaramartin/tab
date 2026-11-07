@@ -1,4 +1,4 @@
-// Candidate next actions for any screen, with no per-app code (replaces candidates.ts's web/GitHub/Terminal cases).
+// Candidate next actions for any screen.
 // Sources, in order: suggestions from faster tiers; the focused field; controls near the last thing the user touched
 // (reading order, same section); values the user typed before into fields with the same label; Return to submit.
 import type { Action, El, ScreenState } from "../../../protocol/types.ts";

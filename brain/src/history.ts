@@ -6,7 +6,7 @@ export interface HistTarget {
     role: Role;
     label: string;
     list?: El["list"];
-    // v2: what element signatures (memory/sig.ts) need
+    // what element signatures (memory/sig.ts) need
     section?: string;
     axId?: string;
     grid?: El["grid"];
@@ -17,7 +17,7 @@ export interface HistEntry {
     op: Op; // never "sequence": sequences are recorded step by step
     app: string;
     url?: string;
-    window?: string; // v2: native steps (habit templates are per kind of screen)
+    window?: string; // habit templates are per kind of screen
     target?: HistTarget;
     value?: string;
     ts: number;

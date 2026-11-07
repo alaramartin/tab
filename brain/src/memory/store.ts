@@ -66,7 +66,6 @@ export interface Snapshot {
     app: string;
     window: string;
     url: string | null;
-    source: ScreenState["source"];
     els: CompactEl[];
 }
 
@@ -74,7 +73,7 @@ const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 CREATE TABLE IF NOT EXISTS snapshots (
-    hash TEXT PRIMARY KEY, app TEXT NOT NULL, window TEXT, url TEXT, kind TEXT, source TEXT, n_els INTEGER,
+    hash TEXT PRIMARY KEY, app TEXT NOT NULL, window TEXT, url TEXT, kind TEXT, n_els INTEGER,
     first_ts INTEGER, last_ts INTEGER, seen INTEGER DEFAULT 1, data BLOB NOT NULL,
     base TEXT, depth INTEGER DEFAULT 0 -- delta-encoded against base (same place, previous screen); depth 0 = keyframe
 );
@@ -94,12 +93,13 @@ CREATE TABLE IF NOT EXISTS ghosts (
 CREATE TABLE IF NOT EXISTS episodes (
     id INTEGER PRIMARY KEY, start_ts INTEGER, end_ts INTEGER, app TEXT, window TEXT, n_steps INTEGER DEFAULT 0, summary TEXT
 );
+CREATE TABLE IF NOT EXISTS workflows (sig TEXT PRIMARY KEY, learned_at INTEGER, accepted INTEGER DEFAULT 0, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `;
 
-/** Key for "the latest screen of this place": web pages by URL, everything else by app. */
-function placeKey(s: { app: string; url?: string | null; source?: string }): string {
-    return s.source === "web" && s.url ? `web:${s.url}` : s.app;
+/** Key for "the latest screen of this place": the app (its windows' screens are delta-encoded on each other). */
+function placeKey(s: { app: string }): string {
+    return s.app;
 }
 
 export class Memory {
@@ -119,9 +119,9 @@ export class Memory {
             snapGet: this.db.prepare("SELECT hash FROM snapshots WHERE hash = ?"),
             snapSeen: this.db.prepare("UPDATE snapshots SET seen = seen + 1, last_ts = ? WHERE hash = ?"),
             snapPut: this.db.prepare(
-                "INSERT INTO snapshots (hash, app, window, url, kind, source, n_els, first_ts, last_ts, data, base, depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO snapshots (hash, app, window, url, kind, n_els, first_ts, last_ts, data, base, depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ),
-            snapRead: this.db.prepare("SELECT hash, app, window, url, source, data, base FROM snapshots WHERE hash = ?"),
+            snapRead: this.db.prepare("SELECT hash, app, window, url, data, base FROM snapshots WHERE hash = ?"),
             snapDepth: this.db.prepare("SELECT depth FROM snapshots WHERE hash = ?"),
             stepPut: this.db.prepare(
                 `INSERT INTO steps (ts, app, window, url, screen_kind, op, by, target_sig, target, value, before_value, before_snap, episode, ghost_id, partial)
@@ -163,7 +163,7 @@ export class Memory {
                 const dj = JSON.stringify(delta);
                 if (dj.length < json.length / 2) (data = dj, base = prev, depth = prevDepth + 1);
             }
-            this.q.snapPut.run(hash, s.app, window, url, screenKind({ app: s.app, url: url ?? undefined, window }), s.source, els.length, ts, ts,
+            this.q.snapPut.run(hash, s.app, window, url, screenKind({ app: s.app, url: url ?? undefined, window }), els.length, ts, ts,
                 zstdCompressSync(Buffer.from(data)), base, depth);
         }
         this.lastEls.set(key, els);
@@ -192,8 +192,7 @@ export class Memory {
 
     /** Record one action. Values are redacted; secure targets never carry one. */
     addStep(st: StepIn): number {
-        // Web steps belong to their page's screen (CDP states), everything else to the app's latest screen.
-        const snapKey = st.url && this.lastSnap.has(`web:${st.url}`) ? `web:${st.url}` : st.app;
+        const snapKey = st.app;
         let before = this.lastSnap.get(snapKey) ?? null;
         // Screens arrive while the user types, so the latest one already shows (some of) the text. A type step's
         // "before" is the last screen from before the typing: walk back past screens where the field holds a growing
@@ -254,7 +253,7 @@ export class Memory {
     }
 
     ghostShown(g: { id: string; ts: number; action: Action; latencyMs: number }): void {
-        const snap = this.lastSnap.get(g.action.app) ?? (g.action.url ? this.lastSnap.get(`web:${g.action.url}`) : undefined) ?? null;
+        const snap = this.lastSnap.get(g.action.app) ?? null;
         this.q.ghostPut.run(g.id, g.ts, g.action.app, g.action.source, g.action.confidence, g.action.label,
             JSON.stringify(g.action, (k, v) => (k === "value" && typeof v === "string" ? redact(v) : v)), snap, g.latencyMs);
     }
@@ -264,17 +263,16 @@ export class Memory {
     }
 
     snapshot(hash: string): Snapshot | null {
-        const r = this.q.snapRead.get(hash) as { hash: string; app: string; window: string; url: string | null; source: string | null; data: Uint8Array; base: string | null } | undefined;
+        const r = this.q.snapRead.get(hash) as { hash: string; app: string; window: string; url: string | null; data: Uint8Array; base: string | null } | undefined;
         if (!r) return null;
         const raw = JSON.parse(zstdDecompressSync(r.data).toString());
-        const source = (r.source ?? "ax") as Snapshot["source"];
-        if (!r.base) return { hash: r.hash, app: r.app, window: r.window, url: r.url, source, els: raw };
+        if (!r.base) return { hash: r.hash, app: r.app, window: r.window, url: r.url, els: raw };
         const base = this.snapshot(r.base);
         if (!base) return null;
         const delta = raw as Delta;
         const els = base.els.slice(0, delta.n);
         for (const [i, e] of delta.d) els[i] = e;
-        return { hash: r.hash, app: r.app, window: r.window, url: r.url, source, els };
+        return { hash: r.hash, app: r.app, window: r.window, url: r.url, els };
     }
 
     steps(opts: { since?: number; until?: number; app?: string; limit?: number } = {}): StepRow[] {
@@ -298,6 +296,20 @@ export class Memory {
             bytes: one("SELECT COALESCE(SUM(LENGTH(data)), 0) FROM snapshots"),
             byApp: this.db.prepare("SELECT app, COUNT(*) AS n FROM steps GROUP BY app ORDER BY n DESC").all() as { app: string; n: number }[],
         };
+    }
+
+    /** Learned chores ("teach once, then repeat"), as the pattern engine saves them. */
+    workflows<T>(): T[] {
+        return (this.db.prepare("SELECT data FROM workflows ORDER BY learned_at DESC").all() as { data: string }[]).map((r) => JSON.parse(r.data) as T);
+    }
+
+    saveWorkflow(sig: string, learnedAt: number, accepted: number, data: unknown): void {
+        this.db.prepare("INSERT OR REPLACE INTO workflows (sig, learned_at, accepted, data) VALUES (?, ?, ?, ?)").run(sig, learnedAt, accepted, JSON.stringify(data));
+    }
+
+    forgetWorkflows(since?: number): void {
+        if (since === undefined) this.db.prepare("DELETE FROM workflows").run();
+        else this.db.prepare("DELETE FROM workflows WHERE learned_at >= ?").run(since);
     }
 
     /** Finished episodes (no step for `quietMs`) with ≥ 3 steps and no summary yet, oldest first. */
@@ -386,6 +398,7 @@ export class Memory {
         if (!where.length) throw new Error("forget needs an app or a time");
         const w = where.join(" AND ");
         const n = Number(this.db.prepare(`DELETE FROM steps WHERE ${w}`).run(...args).changes);
+        if (opts.since !== undefined && !opts.app) this.forgetWorkflows(opts.since);
         this.db.prepare(`DELETE FROM ghosts WHERE ${w}`).run(...args);
         const sw = w.replace(/\bts\b/g, "first_ts");
         this.db.prepare(`DELETE FROM snapshots WHERE ${sw}`).run(...args);

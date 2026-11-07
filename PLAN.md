@@ -144,16 +144,26 @@ TabShell (Swift)                          Hub + brain (TypeScript, :7800)
 
 ---
 
+### Simplifying (Nov 7)
+
+Once v2 worked, everything that existed only for the hackathon or as an alternative went:
+- **Local only:** the Claude decider, the Claude long-text option and the Anthropic SDK were removed. Qwen3-1.7B is the only predictor model.
+- **Readers:** the Chrome layer (`web/`: CDP, demo sites, payment rails), the Terminal-only reader, the Calendar beat and the Dock ghost were removed. Chrome is read like every other app.
+- **Pattern engine:** rebuilt on Accessibility lists and table rows in any app. Chores live in memory.db, and steps carry their window.
+- **Payments:** the core moved into the hub: x402 only, with the screen check and the ledger. A future detector reports 402s to the hub.
+- **Settings and switches:** the slow OCR mode, port and tuning knobs, and the separate debug switches were removed. One `TAB_DEBUG` remains, and the logs hold no values without it.
+- **HUD:** compact, with the Tab did / You did breakdown behind a click. The end-of-demo Reveal card was removed.
+- **Files:** Jev's docs, demo-day scripts, `design/` and the old fixtures were removed. The two video projects moved into `demo-videos/`.
+
 ## 3. Still to do
 
-1. **"Teach once, then repeat" in any app.**
-   - The pattern engine only counts a click as finishing a chore if it's in Chrome, and it needs the CDP layer's list metadata.
-   - The fix is to build units from AX rows, lists and grid positions, and mine repeated action-template sequences from memory, so remembered workflows live in memory.db instead of `workflows.json`.
-2. **Store where each value came from** (copied from a screen, a known fact, n+1, a transform) with each step, so a recorded step can replay in a new context.
-3. **Situation search across apps with embeddings.** Similar past moments are matched by exact screen kind today.
-4. **Incremental AX refresh.** Re-walk only the subtree a notification names. Big windows still hit the 80 ms budget.
-5. **A vision-model pass for canvas windows,** beyond OCR.
-6. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --model qwen --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-7. **Try the Claude long-text tier live** (needs a key).
-8. **Feed episode summaries to the model** as long-range context, and add a way to search memory outside the CLI.
-9. **Remove the last hackathon leftovers:** the Terminal pill special case, the Dock-icon ghost, the Calendar code in `AppSwitcher` and `NativeApp.swift`. Payments go behind an explicit switch.
+1. **Notice payment requests in any app.** The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
+2. **Design the HUD.** It's a placeholder: status, last payment, and an expandable Tab did / You did.
+3. **Test the pattern engine live.** Add a list window and a form window to the testbed, and an e2e step for teach once, repeat, and "do the remaining".
+4. **Store where each value came from** (copied from a screen, a known fact, n+1, a transform) with each step, so a recorded step can replay in a new context.
+5. **Similar past moments across apps.** Embed situations, so a moment in one app can recall what you did in a similar one elsewhere.
+6. **Incremental Accessibility refresh.** Re-walk only the subtree a notification names. Big windows still hit the 80 ms budget.
+7. **A vision-model pass for canvas windows,** beyond OCR.
+8. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
+9. **Feed episode summaries to the model** as long-range context, and search memory from the app, not just the command line.
+10. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.

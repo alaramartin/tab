@@ -7,7 +7,7 @@ import type { PastStep } from "../src/predict/types.ts";
 const r = { x: 0, y: 0, w: 50, h: 20 };
 const cell = (row: number, value = ""): El => ({ id: `desc:Number#${row}`, path: `desc:Number#${row}`, role: "textfield", label: "Number", grid: { row, col: 1 }, rect: r, enabled: true, ...(value ? { value } : {}) });
 const sheet = (filled: Record<number, string>): ScreenState => ({
-    type: "state", source: "ax", app: "app", window: "Sheet", focused: true, seq: 1, ts: 0,
+    type: "state", app: "app", window: "Sheet", seq: 1, ts: 0,
     elements: Array.from({ length: 8 }, (_, i) => cell(i, filled[i])),
 });
 const T = 1_000_000;
@@ -42,7 +42,7 @@ test("two numbered rows → the next row's number; three → also 'fill the rema
 test("no grid (a canvas sheet): the next value goes where focus moved", () => {
     const t = new SequenceTier();
     const flat = (k: number): PastStep => ({ ts: T + k * 2000, app: "app", op: "type", by: "user", target: { id: "canvas", path: "canvas", role: "other", label: "Sheet", rect: r, enabled: true }, value: String(k + 1) });
-    const s: ScreenState = { type: "state", source: "ax", app: "app", window: "Sheet", focused: true, seq: 1, ts: 0, elements: [{ id: "canvas", path: "canvas", role: "other", label: "Sheet", rect: r, enabled: true, focused: true }] };
+    const s: ScreenState = { type: "state", app: "app", window: "Sheet", seq: 1, ts: 0, elements: [{ id: "canvas", path: "canvas", role: "other", label: "Sheet", rect: r, enabled: true, focused: true }] };
     const c = t.predict({ now: T + 9000, active: s, recent: [], history: [flat(0), flat(1), flat(2)] });
     assert.equal(c[0].action.value, "4");
     assert.equal(c[0].action.targetPath, "canvas");
@@ -59,7 +59,7 @@ test("an older run with another rule doesn't block a new one in the same column"
 test("generic candidates: a URL printed in a terminal becomes 'Open …', newest first", async () => {
     const { genericCandidates, urlsOnScreen } = await import("../src/predict/generic.ts");
     const term: ScreenState = {
-        type: "state", source: "ax", app: "com.apple.Terminal", window: "zsh", focused: true, seq: 1, ts: 0,
+        type: "state", app: "com.apple.Terminal", window: "zsh", seq: 1, ts: 0,
         elements: [{ id: "id:term", path: "id:term", role: "textarea", label: "shell", focused: true, rect: r, enabled: true,
             value: "$ git push\nremote: Create a pull request for 'fix' on GitHub by visiting:\nremote:   https://github.com/a/b/pull/new/fix\n$ " }],
     };

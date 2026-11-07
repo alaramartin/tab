@@ -1,37 +1,49 @@
-// Hub logic: routing, the predict loop, ghosts, payments, sequences, counters.
-// Transport-free so the websocket server, replay, and tests can all drive it.
-import type { Action, El, Ghost, HubToShell, HubToWeb, PaymentRequired, Rect, ScreenState, UserEvent } from "../../protocol/types.ts";
+// Hub logic: the predict loop, ghosts, the sequence runner, payments, counters.
+// Transport-free so the websocket server and tests drive it the same way.
+import type { Action, El, Ghost, HubToDetector, HubToShell, Rect, ScreenState, UserEvent } from "../../protocol/types.ts";
 import { countStep, newHud } from "./counters.ts";
 import { History, toTarget, type HistEntry } from "./history.ts";
+import type { Memory } from "./memory/store.ts";
 import type { Decider } from "./model.ts";
 import { PatternEngine, type PatternAction, type Step } from "./pattern.ts";
-import { CHROME, contentSig, findEl, StateStore, stateKey } from "./state.ts";
-import type { Memory } from "./memory/store.ts";
-
-/** STRETCH: native steps take this many times as long, so the audience can follow (human's call: 10% slower). */
-const NATIVE_PACE = Number(process.env.TAB_NATIVE_PACE ?? 1.1);
+import { fmtUsd, intentCheck } from "./pay/intent.ts";
+import { parseChallenge, pay, type Paid } from "./pay/x402.ts";
+import { contentSig, findEl, StateStore, stateKey } from "./state.ts";
 
 const DEBOUNCE_MS = 40; // fast tiers take ~1 ms: predict as soon as a screen settles
 const IDLE_MS = 600; // model ghosts wait for this much quiet
 const SHOW_AT = 0.6;
-const EXEC_TIMEOUT_MS = 3000;
+const EXEC_TIMEOUT_MS = 8000; // a step may wait up to 3 s for its target, then type
 const STATE_WAIT_MS = 1000;
-const ECHO_MS = 400; // user_events C reports for our own exec
+const ECHO_MS = 400; // input caused by our own steps, still arriving after a sequence
 
 type Shown = { ghost: Ghost; action?: Action; paymentId?: string };
 
+/** A payment request, checked against the screen. */
+interface Payment {
+    paymentId: string;
+    request: { url: string; method: string; headers: Record<string, string>; body?: string };
+    domain: string;
+    payTo: string;
+    amountUsd: string;
+    verdict: { ok: boolean; reason?: string };
+    anchorRect?: Rect;
+}
+
 export interface BrainOpts {
     sendShell(m: HubToShell): void;
-    sendWeb(m: HubToWeb): void;
+    sendDetector?(m: HubToDetector): void;
     decider: Decider | null;
-    /** Replay/tests: predict right away instead of debouncing and waiting for idle. */
+    /** Tests: predict right away instead of debouncing and waiting for idle. */
     immediate?: boolean;
-    /** Where learned workflows are saved (`~/.tab/workflows.json` in the hub); omit for memory only (tests). */
-    workflowsFile?: string | null;
-    /** Name icon-only controls from their pixels (the hub's vision model); omit to leave them unnamed. */
+    /** Name icon-only controls from their pixels (the local vision model); omit to leave them unnamed. */
     nameIcons?(items: { hash: string; png: string }[]): Promise<{ hash: string; label: string }[]>;
     /** Action memory (~/.tab/memory.db in the hub); omit in tests that don't need it. */
     memory?: Memory | null;
+    /** Pay a held request (x402); tests replace it. */
+    pay?(url: string, init: RequestInit): Promise<Paid>;
+    /** Keep a record of each payment (the hub writes ~/.tab/payments.jsonl). */
+    recordPayment?(p: { domain: string; payTo: string; amountUsd: string; url: string; txHash?: string; ok: boolean; error?: string }): void;
     onPredict?(info: { source: "pattern" | "model"; latencyMs: number; action: Action | null }): void;
 }
 
@@ -47,39 +59,21 @@ export class Brain {
     private dismissedKey: string | null = null;
     private lastInputTs = 0;
     private lastSig = "";
+    private activeKey = "";
+    private activeSince = 0;
     private timer: NodeJS.Timeout | null = null;
-    private payment: PaymentRequired | null = null;
+    private payment: Payment | null = null;
     private paying: string | null = null; // paymentId accepted and settling
     private running: { stop: boolean } | null = null;
     private echoUntil = 0;
     private execWaiters = new Map<string, (r: { ok: boolean; error?: string }) => void>();
-    private stateWaiters: { key: string; resolve: () => void }[] = [];
+    private stateWaiters: { app: string; resolve: () => void }[] = [];
     private modelCache: { key: string; action: Action | null } | null = null;
     private modelAbort: AbortController | null = null;
     private paused = false;
 
     constructor(private o: BrainOpts) {
-        this.pattern = new PatternEngine({ file: o.workflowsFile ?? null });
-    }
-
-    /** Fresh start for a rehearsal or the demo: no history, no learned units, counters at 0, nothing on screen. */
-    reset(keepWorkflows = false): void {
-        if (this.timer) clearTimeout(this.timer);
-        this.history = new History();
-        if (!keepWorkflows) this.pattern.forgetWorkflows();
-        this.pattern = new PatternEngine({ file: this.o.workflowsFile ?? null }); // reloads what was kept
-        this.hud = newHud();
-        this.payment = null;
-        this.paying = null;
-        this.dismissedKey = null;
-        this.modelCache = null;
-        this.echoUntil = 0;
-        this.lastSig = "";
-        this.gen++;
-        if (this.running) this.running.stop = true;
-        this.shown = null;
-        this.o.sendShell({ type: "ghost_hide" });
-        this.sendHud();
+        this.pattern = new PatternEngine(o.memory ?? null);
     }
 
     private pushHistory(e: HistEntry): void {
@@ -116,8 +110,6 @@ export class Brain {
                 this.onState(m);
                 break;
             case "user_event":
-                // AX reads of Chrome duplicate what CDP reports when it's connected: let C speak for its pages then.
-                if (m.app === CHROME && this.store.webLive()) break;
                 this.onUserEvent(m);
                 break;
             case "paused":
@@ -130,6 +122,7 @@ export class Brain {
                     const n = this.o.memory?.forget({ since }) ?? 0;
                     this.history.entries = this.history.entries.filter((e) => e.ts < since);
                     this.o.decider?.rebuild?.(this.o.memory ?? null);
+                    this.pattern.reload();
                     console.log(`[memory] forgot ${n} steps since ${new Date(since).toLocaleTimeString()}`);
                 });
                 this.hide();
@@ -157,31 +150,17 @@ export class Brain {
             case "exec_result":
                 this.execWaiters.get(m.ghostId)?.(m);
                 break;
-            case "hud_click":
-                if (m.item === "ledger" && this.hud.lastTx) this.o.sendWeb({ type: "open_url", url: this.hud.lastTx.explorerUrl });
-                break;
         }
     }
 
-    fromWeb(m: any): void {
+    /** A payment detector: it holds a request that got an HTTP 402 and asks Tab what to do. */
+    fromDetector(m: any): void {
         switch (m.type) {
-            case "hello":
-                break;
-            case "state":
-                this.onState(m);
-                break;
-            case "user_event":
-                this.onUserEvent(m);
-                break;
-            case "exec_result":
-                this.execWaiters.get(m.ghostId)?.(m);
-                break;
             case "payment_required":
-                this.payment = m;
-                this.showPayment(m);
+                this.onPaymentRequired(m);
                 break;
-            case "payment_result":
-                this.onPaymentResult(m);
+            case "payment_cancelled":
+                this.onPaymentCancelled(m.paymentId);
                 break;
         }
     }
@@ -189,23 +168,25 @@ export class Brain {
     // ---------- state & input ----------
 
     private onState(s: ScreenState): void {
-        if (s.source === "ax" && s.app === CHROME && this.store.webLive()) return; // CDP speaks for Chrome
         this.store.put(s);
         this.remember(() => this.o.memory?.putState(s));
         try {
             this.o.decider?.see?.(s);
         } catch {}
-        const key = stateKey(s);
-        this.stateWaiters = this.stateWaiters.filter((w) => (w.key === key ? (w.resolve(), false) : true));
+        this.stateWaiters = this.stateWaiters.filter((w) => (w.app === s.app ? (w.resolve(), false) : true));
         if (this.running) return;
         const active = this.store.active();
-        if (!active || stateKey(active) !== key) return;
+        if (!active || stateKey(active) !== stateKey(s)) return;
+        if (stateKey(active) !== this.activeKey) {
+            this.activeKey = stateKey(active);
+            this.activeSince = Date.now();
+        }
         const sig = contentSig(active);
         if (sig !== this.lastSig) {
             this.lastSig = sig;
             this.schedule(DEBOUNCE_MS);
         } else {
-            this.refreshGhostRect(active);
+            this.refreshGhostRect();
         }
     }
 
@@ -219,46 +200,45 @@ export class Brain {
     }
 
     private onUserEvent(e: UserEvent): void {
-        if (this.running || Date.now() < this.echoUntil) return; // our own exec, echoed back by the page
-        if (e.kind === "focus") return;
-        const op = e.kind === "navigate" ? "navigate" : e.kind;
+        if (this.running || Date.now() < this.echoUntil) return; // our own steps, reported back
         this.remember(() =>
-            this.o.memory?.addStep({ ts: e.ts, app: e.app, window: e.window, url: e.url, op, by: "user", target: e.target, value: e.value, before: e.before, partial: e.partial }),
+            this.o.memory?.addStep({ ts: e.ts, app: e.app, window: e.window, url: e.url, op: e.kind, by: "user", target: e.target, value: e.value, before: e.before, partial: e.partial }),
         );
         this.pushHistory({
-            op,
+            op: e.kind,
             app: e.app,
             url: e.url,
-            window: e.window ?? this.store.forStep(e.app, e.url)?.window ?? (this.store.frontmost?.app === e.app ? this.store.frontmost.window : undefined),
+            window: e.window ?? this.store.latest(e.app)?.window,
             target: e.target ? toTarget(e.target) : undefined,
             value: e.value,
             ts: e.ts,
             by: "user",
         });
-        this.dismissedKey = null; // the user did something on the page: everything may be offered again
-        this.onUserInput(e.kind === "click" && e.target?.role === "button", true);
+        this.dismissedKey = null; // the user did something: everything may be offered again
+        const finishing = (e.kind === "click" && e.target?.role === "button") || (e.kind === "key" && (e.value === "Return" || e.value === "Enter"));
+        this.onUserInput(finishing, true);
     }
 
     /**
-     * Any real input hides the ghost; predict again after quiet. Button clicks may complete a pattern unit, so check that now.
-     * Ignoring is sticky: a ghost hidden by input elsewhere isn't re-offered until the user acts on a page (onUserEvent).
+     * Any real input hides the ghost; predict again after quiet. A finishing step may complete a pattern unit: check now.
+     * Ignoring is sticky: a ghost hidden by other input isn't offered again until the user acts (onUserEvent).
      */
-    private onUserInput(maybeUnitEnd = false, onPage = false): void {
+    private onUserInput(finishing = false, acted = false): void {
         if (this.running) return;
         // Typing on past a completion isn't ignoring it: the next letters just update it.
-        if (!onPage && this.shown?.action && !this.shown.ghost.caret) this.dismissedKey = actionKey(this.shown.action);
+        if (!acted && this.shown?.action && !this.shown.ghost.caret) this.dismissedKey = actionKey(this.shown.action);
         if (this.shown?.action) this.remember(() => this.o.memory?.ghostOutcome(this.shown!.ghost.id, "ignored"));
         this.hide();
         this.modelAbort?.abort(); // the screen is changing: a model answer for the old one is worthless
         this.lastInputTs = Date.now();
         this.gen++;
-        this.schedule(maybeUnitEnd ? DEBOUNCE_MS : IDLE_MS);
+        this.schedule(finishing ? DEBOUNCE_MS : IDLE_MS);
     }
 
     // ---------- predict ----------
 
     private schedule(ms: number): void {
-        if (this.o.immediate) return; // replay calls predictNow()
+        if (this.o.immediate) return; // tests call predictNow()
         if (this.timer) clearTimeout(this.timer);
         const gen = ++this.gen;
         this.timer = setTimeout(() => void this.predict(gen), ms);
@@ -273,41 +253,25 @@ export class Brain {
         if (this.payment) return this.paying === this.payment.paymentId ? undefined : this.showPayment(this.payment);
         const active = this.store.active();
         if (!active) return;
-
-        // 1. Pattern rule.
         const now = Date.now();
+
+        // 1. A chore taught once, repeated for the next row; or one learned earlier, for a whole list.
         const t0 = performance.now();
-        const pa = this.pattern.predict(this.history.entries, this.store.recent(now), now);
+        const pa =
+            this.pattern.predict(this.history.entries, this.store.recent(now), now) ??
+            this.pattern.recall(active, this.store.recent(now), now, this.history.entries, this.activeSince);
         const pMs = performance.now() - t0;
-        if (pa) {
-            const shown = this.maybeShow(pa, gen, pMs);
-            this.logPred(gen, "pattern", pMs, pa, shown);
-            if (shown) return;
-        }
+        if (pa && this.maybeShow(pa, gen, pMs)) return this.logPred("pattern", pMs, pa);
 
-        // 1b. A saved workflow for this page, offered before the user starts (after a restart too).
-        const t2 = performance.now();
-        const rc = pa ? null : this.pattern.recall(active, this.store.recent(now), now, this.history.entries);
-        if (rc) {
-            const ms = performance.now() - t2;
-            const shown = this.maybeShow(rc, gen, ms);
-            this.logPred(gen, "pattern", ms, rc, shown);
-            if (shown) return;
-        }
-
-        // 2. The decider: its fast tiers (habits, ~1 ms) may show a confident ghost right away; the local model runs only
-        // after the user has paused, and is aborted as soon as anything changes.
+        // 2. The decider: its fast tiers (~1 ms) may show a confident ghost right away; the local model runs only after
+        // the user has paused, and is aborted as soon as anything changes.
         const decider = this.o.decider;
         if (!decider) return;
         if (decider.fast) {
             const t3 = performance.now();
             const fa = decider.fast({ active, others: this.store.recent(now), history: this.history.entries });
             const fMs = performance.now() - t3;
-            if (fa) {
-                const shown = this.maybeShow(fa, gen, fMs);
-                this.logPred(gen, "pattern", fMs, fa, shown);
-                if (shown) return;
-            }
+            if (fa && this.maybeShow(fa, gen, fMs)) return this.logPred("pattern", fMs, fa);
         }
         if (!this.o.immediate) {
             const wait = this.lastInputTs + IDLE_MS - Date.now();
@@ -329,11 +293,7 @@ export class Brain {
                 this.hud.modelCalls++;
                 this.modelAbort?.abort();
                 const ctl = (this.modelAbort = new AbortController());
-                action = await decider.decide({
-                    active,
-                    others: this.store.recent(Date.now()),
-                    history: this.history.entries,
-                }, ctl.signal);
+                action = await decider.decide({ active, others: this.store.recent(Date.now()), history: this.history.entries }, ctl.signal);
             } catch (err) {
                 if ((err as Error).name !== "AbortError") console.error(`[model] ${decider.name}:`, (err as Error).message);
                 action = null;
@@ -343,7 +303,7 @@ export class Brain {
             this.hud.mode = this.shown ? "shown" : "idle";
         }
         const shown = gen === this.gen && !!action && this.maybeShow(action, gen, ms);
-        this.logPred(gen, "model", ms, action, shown);
+        this.logPred("model", ms, action);
         if (!shown) this.sendHud();
     }
 
@@ -369,30 +329,16 @@ export class Brain {
         const id = `g${++this.ghostSeq}`;
         const label = `${a.label} ⇥`;
         const active = this.store.active();
-
-        if (active && active.source === "native") {
-            // Terminal: no element rect, pill at the bottom-left of the window.
-            const win = active.elements[0]?.rect;
-            if (!win) return null;
-            return { id, kind: "action", label, pillAt: { x: win.x + 16, y: win.y + win.h - 16 } };
-        }
-
         const el = this.ghostTarget(a);
         if (!el) {
-            // Offers without a target of their own (open a URL, a key, a sequence that starts in another app) anchor at
-            // the insertion point of the focused field (a terminal prompt), else near the last click.
+            // Offers without a target of their own (open a URL, a key, a sequence that starts elsewhere) sit at the
+            // insertion point of the focused field, else near the last click, else at the top of the screen.
             if (a.op !== "navigate" && a.op !== "sequence" && a.op !== "key") return null;
             const focused = active?.elements.find((e) => e.focused);
-            const caret = focused?.caret;
-            if (caret) return { id, kind: "action", label, pillAt: { x: caret.x, y: caret.y + caret.h + 34 } };
+            if (focused?.caret) return { id, kind: "action", label, pillAt: { x: focused.caret.x, y: focused.caret.y + focused.caret.h + 34 } };
             const near = this.lastClickedRect() ?? (focused && focused.rect.w > 0 ? { ...focused.rect, y: focused.rect.y + focused.rect.h - 60, h: 0 } : undefined);
-            // STRETCH: a sequence that starts in another native app points at that app's Dock icon.
-            const first = a.op === "sequence" ? (a.steps as Step[] | undefined)?.[0] : undefined;
-            const dock = first && first.app !== CHROME && first.app !== active?.app ? { dockApp: first.app } : {};
-            // pillAt is the pill's bottom-left corner; without an anchor, A centers the pill at the top of the screen.
-            return near ? { id, kind: "action", label, pillAt: { x: near.x, y: near.y + near.h + 36 }, ...dock } : { id, kind: "action", label, ...dock };
+            return near ? { id, kind: "action", label, pillAt: { x: near.x, y: near.y + near.h + 36 } } : { id, kind: "action", label };
         }
-        const center = { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 };
         const empty = !el.value;
         const avoid = nearby(el.rect, active, el.id);
         // Completing what the user is typing: only the rest, drawn after the insertion point.
@@ -400,46 +346,40 @@ export class Brain {
             return { id, kind: "text", label: "⇥", rect: el.rect, caret: el.caret, ghostText: a.value.slice(el.value.length) };
         }
         if (a.op === "type" && empty && (el.role === "textfield" || el.role === "textarea")) {
-            return { id, kind: "text", label: "⇥", rect: el.rect, ...(el.radius !== undefined ? { radius: el.radius } : {}), ghostText: a.value, ...(avoid.length ? { avoid } : {}) };
+            return { id, kind: "text", label: "⇥", rect: el.rect, ghostText: a.value, ...(avoid.length ? { avoid } : {}) };
         }
-        const ghost: Ghost = { id, kind: "action", label, rect: el.rect, ...(el.radius !== undefined ? { radius: el.radius } : {}), cursor: center, ...(avoid.length ? { avoid } : {}) };
-        if (this.pillWouldCover(el, active)) ghost.place = "inside"; // dock the pill inside wide fields
+        const ghost: Ghost = { id, kind: "action", label, rect: el.rect, cursor: { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 }, ...(avoid.length ? { avoid } : {}) };
+        if (this.pillWouldCover(el, active)) ghost.place = "inside";
         return ghost;
     }
 
-    /** A pill below a wide field would sit on whatever comes right under it (flow 3: the first list row). */
+    /** A pill below a wide field would sit on whatever comes right under it (the first row of a list). */
     private pillWouldCover(el: El, active: ScreenState | undefined): boolean {
         if (!active || !["textfield", "textarea", "select"].includes(el.role) || el.rect.w < 160) return false;
         const top = el.rect.y + el.rect.h, bottom = top + 44; // pill gap + height, with margin
-        return active.elements.some(
-            (o) => o.id !== el.id && o.rect.y < bottom && o.rect.y + o.rect.h > top && o.rect.x < el.rect.x + 260 && o.rect.x + o.rect.w > el.rect.x,
-        );
+        return active.elements.some((o) => o.id !== el.id && o.rect.y < bottom && o.rect.y + o.rect.h > top && o.rect.x < el.rect.x + 260 && o.rect.x + o.rect.w > el.rect.x);
     }
 
-    /** The element a ghost highlights: the target, or for a sequence, the first step we can find on screen. */
+    /** The element a ghost highlights: the target, or for a sequence, the first step that's on screen. */
     private ghostTarget(a: Action): El | undefined {
-        const steps: Step[] = a.op === "sequence" ? (a.steps as Step[]) ?? [] : [a];
-        const front = this.store.active()?.app;
+        const steps: Step[] = a.op === "sequence" ? ((a.steps as Step[]) ?? []) : [a];
+        const front = this.store.active();
         for (const s of steps) {
-            // Only what's on screen: a step in another (hidden) app would anchor on its last known, stale rect.
-            if (front && s.app !== front) continue;
+            // Only what's on screen now: a step elsewhere would anchor on its last known, stale rect.
+            if (!front || s.app !== front.app || (s.window && s.window !== front.window)) continue;
             const el = this.resolve(s);
             if (el) return el;
         }
         return undefined;
     }
 
-    private refreshGhostRect(active: ScreenState): void {
+    private refreshGhostRect(): void {
         if (!this.shown?.action || !this.shown.ghost.rect) return;
         const el = this.ghostTarget(this.shown.action);
-        if (!el || stateKey(active) !== (this.shown.action.url ?? stateKey(active))) return;
+        if (!el) return;
         const r = this.shown.ghost.rect;
         if (r.x === el.rect.x && r.y === el.rect.y && r.w === el.rect.w && r.h === el.rect.h) return;
-        this.shown.ghost = {
-            ...this.shown.ghost,
-            rect: el.rect,
-            ...(this.shown.ghost.cursor ? { cursor: { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 } } : {}),
-        };
+        this.shown.ghost = { ...this.shown.ghost, rect: el.rect, ...(this.shown.ghost.cursor ? { cursor: { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 } } : {}) };
         this.o.sendShell({ type: "ghost", ghost: this.shown.ghost });
     }
 
@@ -456,23 +396,16 @@ export class Brain {
     private async onAccept(ghostId: string): Promise<void> {
         const s = this.shown;
         if (!s || s.ghost.id !== ghostId) return;
-        if (s.ghost.kind === "pay" && s.paymentId) {
+        if (s.ghost.kind === "pay" && s.paymentId && this.payment?.paymentId === s.paymentId) {
             this.hud.accepted++;
-            // In flight until payment_result (~10 s on venue wifi): the shell shows "Paying …"; input meanwhile must
-            // not hide it or re-offer a live Pay ghost for a payment that's already settling.
-            this.paying = s.paymentId;
-            this.shown = null;
-            this.hud.mode = "running";
-            this.sendHud();
-            this.o.sendWeb({ type: "pay", paymentId: s.paymentId });
-            return;
+            return this.payNow(this.payment);
         }
         if (!s.action) return;
         this.remember(() => this.o.memory?.ghostOutcome(ghostId, "accepted"));
         this.hud.accepted++;
         const steps: Step[] = s.action.op === "sequence" ? (s.action.steps as Step[]) : [s.action];
         const ok = await this.run(ghostId, steps);
-        if (ok && s.action.source === "pattern") this.pattern.onAccepted((s.action as PatternAction).sig);
+        if (ok && s.action.source === "pattern" && (s.action as PatternAction).sig) this.pattern.onAccepted((s.action as PatternAction).sig);
     }
 
     private onDismiss(ghostId: string): void {
@@ -483,14 +416,14 @@ export class Brain {
         }
         if (!s || s.ghost.id !== ghostId) return;
         if (s.paymentId) {
-            this.o.sendWeb({ type: "dismiss_payment", paymentId: s.paymentId });
+            this.o.sendDetector?.({ type: "payment_declined", paymentId: s.paymentId });
             this.payment = null;
         }
-        if (s.action) this.dismissedKey = actionKey(s.action);
-        this.remember(() => this.o.memory?.ghostOutcome(ghostId, "dismissed"));
         if (s.action) {
             const a = s.action;
-            this.remember(() => this.o.decider?.feedback?.(a, "dismissed", findEl(this.store.forStep(a.app, a.url), a.targetId, a.targetPath)));
+            this.dismissedKey = actionKey(a);
+            this.remember(() => this.o.memory?.ghostOutcome(ghostId, "dismissed"));
+            this.remember(() => this.o.decider?.feedback?.(a, "dismissed", findEl(this.store.forStep(a.app, a.window), a.targetId, a.targetPath)));
         }
         this.hide();
     }
@@ -498,7 +431,7 @@ export class Brain {
     // ---------- sequence runner ----------
 
     private resolve(s: Step): El | undefined {
-        const st = this.store.forStep(s.app, s.url);
+        const st = this.store.forStep(s.app, s.window);
         if (s.match) {
             const c = s.match.contains.toLowerCase();
             return st?.elements.find((e) => e.list?.key === s.match!.listKey && e.label.toLowerCase().includes(c));
@@ -512,58 +445,36 @@ export class Brain {
         this.hud.mode = "running";
         this.sendHud();
         let ok = true;
-        let at = -1;
         try {
             for (let k = 0; k < steps.length && !run.stop; k++) {
-                at = k;
                 const step = steps[k];
-                if (step.onFail) continue; // only runs after a failure (below)
-                const t0 = Date.now();
                 if (step.app !== this.store.frontmost?.app && step.op !== "switch_app") {
                     const sw: Action = { op: "switch_app", app: step.app, value: step.app, label: "", confidence: 1, source: step.source };
-                    const r = await this.exec(`${ghostId}:${k}a`, sw, "shell");
+                    const r = await this.exec(`${ghostId}:${k}a`, sw);
                     if (!r.ok) throw new Error(`switch_app ${step.app}: ${r.error}`);
                     countStep(this.hud, sw);
-                    this.store.frontmost = { app: step.app, window: "" };
+                    this.store.frontmost = { app: step.app, window: step.window ?? "" };
                 }
-                // A key step with a target (STRETCH: Return in Calendar's title field) needs it on screen like a click does.
                 const needsTarget = step.op !== "navigate" && step.op !== "switch_app" && (step.op !== "key" || !!step.targetPath);
                 let target = needsTarget ? this.resolve(step) : undefined;
-                // A native app's screen arrives a beat after switching to it (STRETCH: Calendar): wait for it.
-                for (let i = 0; !target && needsTarget && step.app !== CHROME && i < (step.optional ? 2 : 6); i++) {
+                // An app or window that just came forward reports its screen a beat later: wait for it.
+                for (let i = 0; !target && needsTarget && i < 6; i++) {
                     await this.waitForState(step.app);
                     target = this.resolve(step);
                 }
-                // STRETCH: a step that must not run while something is still on screen (Escape with Calendar's event
-                // popover open would discard the new event): wait for it to go, else skip.
-                if (step.unlessPresent) {
-                    for (let i = 0; i < 3 && findEl(this.store.forStep(step.app), step.unlessPresent, step.unlessPresent); i++) await this.waitForState(step.app);
-                    if (findEl(this.store.forStep(step.app), step.unlessPresent, step.unlessPresent)) {
-                        console.log(`[seq] ${ghostId}: step ${k} skipped, ${step.unlessPresent} still on screen`);
-                        continue;
-                    }
-                }
-                if (!target && needsTarget) {
-                    if (step.optional) {
-                        console.log(`[seq] ${ghostId}: step ${k} skipped, target not found (${step.targetPath ?? step.targetId})`);
-                        continue;
-                    }
-                    throw new Error(`step ${k}: target not found (${step.targetPath ?? step.match?.contains ?? step.targetId})`);
-                }
-                const { match: _m, optional: _o, onFail: _f, unlessPresent: _u, ...wire } = step;
+                if (!target && needsTarget) throw new Error(`step ${k}: target not found (${step.targetPath ?? step.match?.contains ?? step.targetId})`);
+                const { match: _m, ...wire } = step;
                 const action: Action = { ...wire, targetId: target?.id ?? step.targetId, targetPath: target?.path ?? step.targetPath };
-                const waitState = this.waitForState(step.app === CHROME && step.url ? step.url : step.app);
-                const r = await this.exec(`${ghostId}:${k}`, action, step.op === "switch_app" ? "shell" : step.app === CHROME ? "web" : "shell");
+                const waitState = this.waitForState(step.app);
+                const r = await this.exec(`${ghostId}:${k}`, action);
                 if (!r.ok) throw new Error(`step ${k} ${step.op}: ${r.error}`);
                 countStep(this.hud, action, target);
-                this.remember(() =>
-                    this.o.memory?.addStep({ ts: Date.now(), app: action.app, url: step.url, op: action.op, by: "tab", target, value: action.value, ghostId }),
-                );
+                this.remember(() => this.o.memory?.addStep({ ts: Date.now(), app: action.app, window: step.window, url: step.url, op: action.op, by: "tab", target, value: action.value, ghostId }));
                 this.pushHistory({
                     op: action.op,
                     app: action.app,
-                    window: this.store.forStep(action.app, step.url)?.window,
-                    url: step.url ?? this.store.active()?.url,
+                    window: step.window ?? this.store.latest(action.app)?.window,
+                    url: step.url,
                     target: target ? toTarget(target) : undefined,
                     value: action.value,
                     ts: Date.now(),
@@ -571,20 +482,10 @@ export class Brain {
                 });
                 this.sendHud();
                 await waitState;
-                // Native type posts keystrokes asynchronously (STRETCH: Calendar QuickEventCell).
-                // waitForState can resolve on a stale poll while the field is still empty; Return then
-                // discards the draft. Wait until the typed text is in the field, or ~1 s.
-                if (step.op === "type" && step.value && step.app !== CHROME) await this.waitForTyped(step);
-                if (step.app !== CHROME && step.op !== "switch_app" && NATIVE_PACE > 1) await new Promise((res) => setTimeout(res, (Date.now() - t0) * (NATIVE_PACE - 1)));
             }
         } catch (err) {
             ok = false;
             console.error(`[seq] ${ghostId}:`, (err as Error).message);
-            // Never strand the user in another app after a failure: switch back (STRETCH: Calendar → Chrome).
-            for (const s of steps.filter((s) => s.onFail && s.op === "switch_app")) {
-                const { match: _m, optional: _o, onFail: _f, unlessPresent: _u, ...wire } = s;
-                await this.exec(`${ghostId}:back`, wire, "shell");
-            }
         } finally {
             this.running = null;
             this.echoUntil = Date.now() + ECHO_MS;
@@ -598,25 +499,24 @@ export class Brain {
         return ok && !run.stop;
     }
 
-    private exec(ghostId: string, action: Action, to: "shell" | "web"): Promise<{ ok: boolean; error?: string }> {
+    private exec(ghostId: string, action: Action): Promise<{ ok: boolean; error?: string }> {
         return new Promise((resolve) => {
             const timer = setTimeout(() => {
                 this.execWaiters.delete(ghostId);
                 resolve({ ok: false, error: "exec timeout" });
-            }, action.app !== CHROME && action.op !== "switch_app" ? 8000 : EXEC_TIMEOUT_MS); // native steps wait up to 3 s for their target, then type
+            }, EXEC_TIMEOUT_MS);
             this.execWaiters.set(ghostId, (r) => {
                 clearTimeout(timer);
                 this.execWaiters.delete(ghostId);
                 resolve(r);
             });
-            if (to === "shell") this.o.sendShell({ type: "exec", ghostId, action });
-            else this.o.sendWeb({ type: "exec", ghostId, action });
+            this.o.sendShell({ type: "exec", ghostId, action });
         });
     }
 
-    private waitForState(key: string): Promise<void> {
+    private waitForState(app: string): Promise<void> {
         return new Promise((resolve) => {
-            const w = { key, resolve };
+            const w = { app, resolve };
             this.stateWaiters.push(w);
             setTimeout(() => {
                 this.stateWaiters = this.stateWaiters.filter((x) => x !== w);
@@ -625,35 +525,32 @@ export class Brain {
         });
     }
 
-    /** After a native `type`, wait until that field's reported value contains what we typed. */
-    private async waitForTyped(step: Step, timeoutMs = 1000): Promise<void> {
-        const want = step.value ?? "";
-        if (!want) return;
-        const t0 = Date.now();
-        while (Date.now() - t0 < timeoutMs) {
-            const v = this.resolve(step)?.value ?? "";
-            if (v === want || v.includes(want)) return;
-            await new Promise((r) => setTimeout(r, 50));
-        }
-    }
-
     // ---------- payments ----------
 
-    /** Corner radius of the element at `r` on the active page: pay, blocked and done ghosts only carry a rect (A fits its box to it). */
-    private radiusAt(r: Rect | undefined): number | undefined {
-        if (!r) return undefined;
-        return this.store.active()?.elements.find((e) => e.rect.x === r.x && e.rect.y === r.y && e.rect.w === r.w && e.rect.h === r.h)?.radius;
+    private onPaymentRequired(m: { paymentId: string; request: Payment["request"]; responseHeaders: Record<string, string>; anchorRect?: Rect }): void {
+        let challenge;
+        try {
+            challenge = parseChallenge(m.responseHeaders);
+        } catch {
+            challenge = null;
+        }
+        if (!challenge) return this.o.sendDetector?.({ type: "payment_declined", paymentId: m.paymentId }); // not something Tab can pay
+        const anchor = m.anchorRect ?? this.lastClickedRect();
+        const verdict = intentCheck(this.store.active(), challenge.amountUsd, anchor);
+        let domain = "";
+        try {
+            domain = new URL(m.request.url).hostname;
+        } catch {}
+        this.payment = { paymentId: m.paymentId, request: m.request, domain, payTo: challenge.payTo, amountUsd: fmtUsd(challenge.amountUsd), verdict, anchorRect: anchor };
+        this.showPayment(this.payment);
     }
 
-    private showPayment(p: PaymentRequired): void {
-        if (!p.anchorRect) p.anchorRect = this.lastClickedRect(); // C should send it; fall back to what the user just clicked
+    private showPayment(p: Payment): void {
         const id = `g${++this.ghostSeq}`;
         const ghost: Ghost = p.verdict.ok
-            ? { id, kind: "pay", label: `Pay $${p.amountUsd} · ${p.payeeDomain} ⇥`, rect: p.anchorRect }
+            ? { id, kind: "pay", label: `Pay $${p.amountUsd} · ${p.domain} ⇥`, rect: p.anchorRect }
             : { id, kind: "blocked", label: `Blocked · ${p.verdict.reason ?? "payment does not match the page"}`, rect: p.anchorRect };
         if (p.anchorRect) {
-            const radius = this.radiusAt(p.anchorRect);
-            if (radius !== undefined) ghost.radius = radius;
             const avoid = nearby(p.anchorRect, this.store.active());
             if (avoid.length) ghost.avoid = avoid;
         }
@@ -665,34 +562,42 @@ export class Brain {
         this.sendHud();
     }
 
-    private onPaymentResult(r: { paymentId: string; ok: boolean; txHash?: string; explorerUrl?: string; error?: string }): void {
-        const p = this.payment;
-        if (p && p.paymentId !== r.paymentId) return; // about a payment we've already moved past
-        const wasPaying = this.paying === r.paymentId;
-        if (wasPaying) this.paying = null;
+    /** Only ever on a Tab press on a pay ghost. */
+    private async payNow(p: Payment): Promise<void> {
+        // Settling takes seconds: the shell shows "Paying …"; input meanwhile must not re-offer the payment.
+        this.paying = p.paymentId;
+        this.shown = null;
+        this.hud.mode = "running";
+        this.sendHud();
+        const headers = Object.fromEntries(Object.entries(p.request.headers).filter(([k]) => !/^(content-length|host|connection)$/i.test(k)));
+        const body = p.request.body ? Buffer.from(p.request.body, "base64") : undefined;
+        const r = await (this.o.pay ?? pay)(p.request.url, { method: p.request.method, headers, body });
+        this.o.recordPayment?.({ domain: p.domain, payTo: p.payTo, amountUsd: p.amountUsd, url: p.request.url, txHash: r.txHash, ok: r.ok, error: r.error });
+        this.o.sendDetector?.({ type: "payment_done", paymentId: p.paymentId, ok: r.ok, status: r.status, headers: r.headers, body: r.body, error: r.error });
+        if (this.paying !== p.paymentId) return; // cancelled meanwhile
+        this.paying = null;
         this.payment = null;
-        if (!r.ok && r.error === "cancelled") {
-            // The page went away (navigation, tab closed): nothing to pay or block anymore.
-            if (this.shown?.paymentId === r.paymentId) this.hide();
-            else if (wasPaying) this.o.sendShell({ type: "ghost_hide" }); // take down the shell's "Paying …" pill
-            if (wasPaying) {
-                this.hud.mode = "idle";
-                this.sendHud();
-            }
-            return;
-        }
         const id = `g${++this.ghostSeq}`;
-        const rect = p?.anchorRect;
         const ghost: Ghost = r.ok
-            ? { id, kind: "done", label: `Paid $${p?.amountUsd ?? "?"} ✓`, rect, ttlMs: 1500 }
-            : { id, kind: "blocked", label: `Blocked · ${r.error ?? "payment failed"}`, rect };
-        const radius = this.radiusAt(rect);
-        if (radius !== undefined) ghost.radius = radius;
-        if (r.ok && r.txHash && r.explorerUrl) this.hud.lastTx = { hash: r.txHash, explorerUrl: r.explorerUrl, amountUsd: p?.amountUsd ?? "" };
-        this.shown = r.ok ? null : { ghost, paymentId: r.paymentId };
+            ? { id, kind: "done", label: `Paid $${p.amountUsd} ✓`, rect: p.anchorRect, ttlMs: 1500 }
+            : { id, kind: "blocked", label: `Blocked · ${r.error ?? "payment failed"}`, rect: p.anchorRect };
+        if (r.ok && r.txHash && r.explorerUrl) this.hud.lastTx = { hash: r.txHash, explorerUrl: r.explorerUrl, amountUsd: p.amountUsd };
+        this.shown = r.ok ? null : { ghost, paymentId: p.paymentId };
         this.o.sendShell({ type: "ghost", ghost });
         this.hud.mode = r.ok ? "idle" : "shown";
         this.sendHud();
+    }
+
+    /** The page went away: nothing to pay or block anymore. */
+    private onPaymentCancelled(paymentId: string): void {
+        if (this.payment?.paymentId !== paymentId) return;
+        this.payment = null;
+        if (this.paying === paymentId) {
+            this.paying = null;
+            this.o.sendShell({ type: "ghost_hide" }); // the shell's "Paying …" pill
+            this.hud.mode = "idle";
+            this.sendHud();
+        } else if (this.shown?.paymentId === paymentId) this.hide();
     }
 
     // ---------- misc ----------
@@ -702,7 +607,7 @@ export class Brain {
         for (let k = this.history.entries.length - 1; k >= 0; k--) {
             const e = this.history.entries[k];
             if (e.op !== "click" || !e.target) continue;
-            return findEl(this.store.forStep(e.app, e.url), e.target.id, e.target.path)?.rect;
+            return findEl(this.store.forStep(e.app, e.window), e.target.id, e.target.path)?.rect;
         }
         return undefined;
     }
@@ -711,14 +616,14 @@ export class Brain {
         this.o.sendShell({ type: "hud", hud: this.hud });
     }
 
-    private logPred(_gen: number, source: "pattern" | "model", latencyMs: number, action: Action | null, _shown: boolean): void {
+    private logPred(source: "pattern" | "model", latencyMs: number, action: Action | null): void {
         this.o.onPredict?.({ source, latencyMs, action });
     }
 }
 
 /**
- * Rects of the other elements within 120 pt of the target (any role, text included), for `Ghost.avoid`:
- * the shell knows the pill's real size and places it where it covers none of them (the shell).
+ * Rects of the other elements within 120 pt of the target (any role, text included), for `Ghost.avoid`: the shell
+ * knows the pill's real size and places it where it covers none of them.
  */
 export function nearby(r: Rect, state: ScreenState | undefined, excludeId?: string): Rect[] {
     if (!state) return [];

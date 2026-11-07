@@ -57,7 +57,7 @@ swift build -c release
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp .build/release/TabShell "$APP/Contents/MacOS/TabShell"
-# Record the commit (and -dirty if shell/ has uncommitted changes) for scripts/preflight.sh.
+# Record the commit (and -dirty if shell/ has uncommitted changes) in the app, so a log shows which build ran.
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git status --porcelain -- . 2>/dev/null)" ]; then COMMIT="$COMMIT-dirty"; fi
 cat >"$APP/Contents/Info.plist" <<EOF

@@ -1,12 +1,11 @@
 import type { El, ScreenState } from "../../protocol/types.ts";
 
-export const CHROME = "com.google.Chrome";
-// PLAN says 120 s, but C only re-emits on change, so static pages (release notes, inbox) go stale fast.
+/** Screens are remembered this long after they were last seen (a list in another window feeds the next step). */
 export const CACHE_MS = 600_000;
 
-/** Web (CDP) states are keyed by URL; native and AX states by app (an AX read of Chrome is one state per app). */
-export function stateKey(s: { app: string; url?: string; source?: string }): string {
-    return s.app === CHROME && s.url && s.source !== "ax" ? s.url : s.app;
+/** One screen per app and window. */
+export function stateKey(s: { app: string; window?: string }): string {
+    return `${s.app}|${s.window ?? ""}`;
 }
 
 /** Content signature: ignores rects, so window moves and scrolls don't re-trigger prediction. */
@@ -20,49 +19,31 @@ export class StateStore {
     private byKey = new Map<string, ScreenState>();
     frontmost: { app: string; window: string } | null = null;
 
-    lastWebTs = 0;
-
     put(s: ScreenState): void {
-        if (s.source === "web") this.lastWebTs = Date.now();
         this.byKey.set(stateKey(s), s);
-        if (s.source === "web" && s.focused) {
-            // Only one web tab can be focused; clear the flag on the others.
-            for (const [k, o] of this.byKey) if (k !== stateKey(s) && o.source === "web") o.focused = false;
-        }
     }
 
-    get(key: string): ScreenState | undefined {
-        return this.byKey.get(key);
-    }
-
-    /** Active state: the frontmost app's state; for Chrome, the focused tab. */
+    /** The front app's newest screen. */
     active(): ScreenState | undefined {
         const app = this.frontmost?.app;
-        if (!app) return undefined;
-        if (app === CHROME) {
-            let best: ScreenState | undefined;
-            for (const s of this.byKey.values())
-                if (s.source === "web" && s.focused && (!best || s.ts > best.ts)) best = s;
-            return best ?? this.byKey.get(CHROME); // no CDP: Chrome read through AX like any app
-        }
-        return this.byKey.get(app);
+        return app ? this.latest(app) : undefined;
     }
 
-    /** The CDP side is connected and reporting (then it, not AX, speaks for Chrome). */
-    webLive(now = Date.now()): boolean {
-        return now - this.lastWebTs < CACHE_MS;
+    /** An app's newest screen. */
+    latest(app: string): ScreenState | undefined {
+        let best: ScreenState | undefined;
+        for (const s of this.byKey.values()) if (s.app === app && (!best || s.ts > best.ts)) best = s;
+        return best;
     }
 
-    /** States seen within CACHE_MS, newest first. */
+    /** Screens seen within CACHE_MS, newest first. */
     recent(now: number): ScreenState[] {
         return [...this.byKey.values()].filter((s) => now - s.ts <= CACHE_MS).sort((a, b) => b.ts - a.ts);
     }
 
-    /** Latest state for a step: by url for web steps, by app otherwise. */
-    forStep(app: string, url?: string): ScreenState | undefined {
-        if (app === CHROME && url) return this.byKey.get(url);
-        if (app === CHROME) return this.active()?.app === CHROME ? this.active() : undefined;
-        return this.byKey.get(app);
+    /** The screen a step acts on: that window of the app if we have it, else the app's newest screen. */
+    forStep(app: string, window?: string): ScreenState | undefined {
+        return (window !== undefined ? this.byKey.get(stateKey({ app, window })) : undefined) ?? this.latest(app);
     }
 }
 

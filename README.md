@@ -4,70 +4,72 @@
 
 Tab predicts your next action on your Mac and shows it as a ghost: a highlight on the button you're about to click, or gray text in the field you're about to fill. Press **Tab** to do it. Press **Esc** to dismiss it.
 
-It works in any app without per-app code. It reads the front window through macOS Accessibility, falls back to on-device text recognition for windows that expose nothing (canvas apps, games, some Electron and CEF apps), learns from what you do, and predicts with local models. Nothing leaves the Mac.
+It works in any app. It reads the front window through macOS Accessibility, reads the text of windows that expose nothing (canvas apps, games, some Electron apps) with on-device text recognition, learns from what you do, and predicts with models that run on your Mac. Nothing you do is sent anywhere.
 
-Some things it does today:
+What it does:
 
-- **Repeats your habits.** After Reply you usually Archive, so the next time you Reply, Archive is one keystroke away.
-- **Fills forms from your past forms.** Type your email into "Email" once, and a "Work email" field on another site offers it. Field names are matched by meaning (embeddings), with checks so "Last name" never gets a full name and a phone field never gets an email.
-- **Continues sequences.** Number three rows (10, 20, 30) and it offers 40, then "Fill the remaining N".
-- **Repeats chores across pages** (the hackathon's pattern engine) and opens URLs printed on screen.
+- **Repeats your habits.** If you usually Archive after Reply, then the next time you Reply, Archive is one keystroke away.
+- **Fills forms from your past forms.** Type your email into "Email" once, and a "Work email" field on another site offers it. Fields are matched by meaning, with checks so "Last name" never gets a full name and a phone field never gets an email.
+- **Completes what you're typing** with things you've typed before.
+- **Continues sequences.** Number three rows (10, 20, 30) and it offers 40, then "Fill the remaining 3".
+- **Repeats a chore for the next item.** Close one ticket from a list by hand, and it offers the same steps for the next one, then for all the rest.
+- **Pays when you say so.** For an HTTP 402 payment request (x402), the ghost becomes `Pay $0.30 · example.com ⇥`. Tab checks the amount against the price on screen first, and blocks a mismatch. Noticing these requests in any app is still being built (see [`PLAN.md`](PLAN.md)).
 
 ## How it works
 
 ```
-TabShell (Swift, menu bar)                Hub + brain (TypeScript, ws://127.0.0.1:7800)
-  AXSensor        any app's window   ──▶    memory.db  (SQLite: screens, steps, ghosts, facts)
-  VisionSensor    OCR when AX is poor        prediction ladder
-  ActionObserver  your clicks and typing       sequences · habits · field facts      ~1 ms
-  Actuator        click / type / key   ◀──     local LLM (Qwen3-1.7B, llama.cpp)     ~0.4 s, only after a pause
-  Overlay + HUD   the ghost                    combiner → one calibrated score
+TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
+  AXSensor        the front window   ──▶    memory.db (SQLite: screens, steps, ghosts, facts)
+  VisionSensor    OCR, icon crops           fast predictions: chores, sequences, habits, form facts   ~1 ms
+  ActionObserver  your clicks, typing       local LLM (Qwen3-1.7B on llama.cpp), after a pause       ~0.4 s
+  Actuator        click / type / key  ◀──   one calibrated score per suggestion; a ghost above 0.6
+  Overlay, HUD    the ghost                 payments (x402)
 ```
 
-- **Perception** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): one snapshot of the front window takes 1–60 ms, depending on the app. Elements carry role, label, value, section, and table row and column.
-- **Recording** (`ActionObserver.swift`, `brain/src/memory/store.ts`): every click, typing burst and shortcut is resolved to the element it hit and stored with the screens before and after it. Screens are stored once and delta-encoded, so 206 MB of old logs became 6.5 MB. Card numbers, SSNs and API keys are redacted on write. Password fields and password managers are never recorded. Old screens are pruned after 30 days and steps after 90; form fills are kept, because field facts come from them.
-- **Prediction** (`brain/src/predict/`): the fast tiers run on every change. The local model reranks candidates and fills values, and only runs once you pause. A logistic combiner turns all of it into one probability, and a ghost shows above 0.6.
-- **Execution** (`Actuator.swift`): AXPress or a real click, typing or pasting (your clipboard is restored afterwards), any key combo, dropdown choices.
+- **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model.
+- **Memory** (`ActionObserver.swift`, `brain/src/memory/`): every click, typing burst and shortcut is saved with the element it hit and the screens before and after it.
+  - Screens are stored once each, and a changed screen is stored as a small patch on the one before.
+  - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
+  - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search.
+- **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. The local model only runs once you pause, and stops as soon as you do something.
+- **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
 
 How Tab was planned and built, and what's still to do, is in [`PLAN.md`](PLAN.md).
 
 ## Running it
 
-Needs macOS 14+, Node 24 and Homebrew. `shell/scripts/setup.sh` does all of the below (add `--agent` to start the hub at login), and `shell/scripts/doctor.sh` checks the result.
+Needs macOS 14+, Node 24 and Homebrew. `shell/scripts/setup.sh` installs everything and builds TabShell. Add `--agent` to start the hub at login. `shell/scripts/doctor.sh` checks the result.
 
-```sh
-brew install llama.cpp
-mkdir -p ~/.tab/models && cd ~/.tab/models
-curl -LO https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
-curl -LO https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf
+Then grant TabShell **Accessibility** (required) and **Screen Recording** (for reading windows without Accessibility, and for icon names) in System Settings → Privacy & Security.
 
-cd brain && npm i && npm start            # hub; starts the models in the background
-shell/scripts/build-shell.sh --run        # TabShell.app; log in ~/.tab/shell.log
-```
+The menu bar icon has **Pause Tab** (nothing is read, recorded or suggested until you resume) and **Forget the Last Hour**. Click the top row of the HUD to see how much Tab did for you.
 
-Grant TabShell **Accessibility** (required) and **Screen Recording** (for the OCR fallback and icon names) in System Settings → Privacy & Security.
+### Settings
 
-The menu bar icon has **Pause Tab** (nothing is read, recorded or suggested until you resume) and **Forget the Last Hour**.
+| What | How |
+| --- | --- |
+| Apps Tab never reads or records | `~/.tab/config.json`: `{"denyApps": ["com.example.app"]}`. Password managers are always excluded. |
+| Only read and record some apps | `~/.tab/config.json`: `{"onlyApps": ["com.apple.mail", "com.google.Chrome"]}`. Changes apply right away. |
+| Suggest, but save nothing to disk | `TAB_MEMORY=off` |
+| Fast predictions only, no local LLM | `TAB_LLM=off` |
+| Details in the logs | `TAB_DEBUG=1` (ghost text, typed values and timings) |
+| Pay from a wallet | `PAYER_PRIVATE_KEY` in `.env` (USDC on Base Sepolia, a testnet) |
 
-Settings:
+To remove Tab and everything it saved: `shell/scripts/uninstall.sh --yes`.
 
-| What                                                | How                                                                                                                                                                                           |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Apps never to read or record                        | `~/.tab/config.json`: `{"denyApps": ["com.example.app"]}` (password managers are always excluded)                                                                                             |
-| Read and record **only** some apps                  | `~/.tab/config.json`: `{"onlyApps": ["com.apple.mail", "com.google.Chrome"]}`. Everything else is ignored. Edits apply right away.                                                            |
-| Run without the local LLM (fast tiers only) | `TAB_LLM=off` |
-| Turn memory off (suggest, but save nothing to disk) | `TAB_MEMORY=off`                                                                                                                                                                              |
-| Debug details in the logs (off by default) | `TAB_DEBUG=1`: ghost text, typed values and timings in the hub's and TabShell's logs |
+## Development
 
-## Tools
-
-| Command (in `brain/`)                 | What it does                                                                                                 |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `npm test`                            | Unit tests                                                                                                   |
-| `npm run e2e`                         | End to end on TabShell's own test window: recording, actuator, habit → ghost → Tab, form fill, row numbering |
-| `npm run e2e:canvas`                  | The OCR path on a window with no Accessibility tree                                                          |
-| `npm run eval [-- --model qwen]`      | Replays memory.db and scores every tier: accuracy, coverage at 85% precision, latency, per app               |
-| `npm run memory -- stats`             | What's in memory                                                                                             |
-| `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time)                                          |
+| Command (in `brain/`) | What it does |
+| --- | --- |
+| `npm test` | Unit tests |
+| `npm run e2e` | End to end on TabShell's own test window: recording, acting, a habit becoming a ghost, form fills, completions, row numbering. It moves the real mouse and types, so leave the Mac alone while it runs. |
+| `npm run e2e:canvas` | The same for a window with no Accessibility tree |
+| `npm run eval [-- --llm]` | Replays memory.db and scores each predictor: accuracy, coverage at 85% precision, latency, per app |
+| `npm run memory -- stats` | What's in memory |
+| `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time) |
+| `npm run memory -- search <words>` | Finds past tasks by meaning |
+| `npm run send -- --listen` | Prints everything the hub sends |
 
 `TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell.
+
+The `demo-videos/` folder has the Remotion projects used to make Tab's demo videos.

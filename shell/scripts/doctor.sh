@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tab v2 health check (read-only): models, permissions, processes, memory.
+# Tab health check (read-only): models, permissions, processes, memory.
 #   shell/scripts/doctor.sh
 set -uo pipefail
 cd "$(dirname "$0")/../.."

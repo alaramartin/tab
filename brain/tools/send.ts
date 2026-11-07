@@ -1,12 +1,11 @@
 // Send protocol messages to the hub by hand, and print everything the hub sends out.
 //
-//   npm run send -- '{"type":"ghost", ...}'            raw JSON (as a tool; use "as":"shell"|"web" to impersonate)
-//   npm run send -- file.json                           a message or a JSON array of messages from a file
-//   npm run send -- --listen                            just print hub traffic
-//   npm run send -- --ghost                             draw a test ghost (A's overlay check)
-//   npm run send -- --fixture protocol/fixtures/x.json  send a captured state as C would
+//   npm run send -- '{"type":"ghost", ...}'   raw JSON (speak as a side with "as":"shell"|"payments")
+//   npm run send -- file.json                  a message or a JSON array of messages from a file
+//   npm run send -- --listen                   just print hub traffic
+//   npm run send -- --ghost                    draw a test ghost
 //
-// For A/C testing the hub forwards: a message with "to":"shell"|"web" is delivered to that side verbatim.
+// A message with "to":"shell"|"payments" is delivered to that side verbatim.
 import { readFileSync, existsSync } from "node:fs";
 import WebSocket from "ws";
 
@@ -24,8 +23,6 @@ const listen = args.includes("--listen");
 let msgs: unknown[] = [];
 if (args[0] === "--ghost") {
     msgs = [{ to: "shell", msg: { type: "ghost", ghost: { id: "test", kind: "action", label: "Click Checkout ⇥", rect: { x: 200, y: 300, w: 120, h: 36 }, cursor: { x: 260, y: 318 } } } }];
-} else if (args[0] === "--fixture") {
-    msgs = load(args[1]).map((m) => ({ as: "web", ...(m as object) }));
 } else if (!listen) {
     msgs = args.flatMap(load);
 }

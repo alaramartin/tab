@@ -7,7 +7,7 @@ import type { PastStep } from "../src/predict/types.ts";
 const r = { x: 0, y: 0, w: 100, h: 20 };
 const field = (label: string, extra: Partial<El> = {}): El => ({ id: `desc:${label}`, path: `desc:${label}`, role: "textfield", label, rect: r, enabled: true, ...extra });
 const typed = (label: string, value: string, ts: number, app = "com.apple.Safari", window = "Apply"): PastStep => ({ ts, app, window, op: "type", by: "user", target: field(label), value });
-const screen = (els: El[], app = "dev.other", window = "Signup"): ScreenState => ({ type: "state", source: "ax", app, window, focused: true, elements: els, seq: 1, ts: 0 });
+const screen = (els: El[], app = "dev.other", window = "Signup"): ScreenState => ({ type: "state", app, window, elements: els, seq: 1, ts: 0 });
 const NOW = 1_800_000_000_000;
 
 test("opposed labels never share a fact; kinds and shapes", () => {

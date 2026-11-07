@@ -1,4 +1,4 @@
-// Generic execution in any app: no per-app code.
+// Running an action in any app.
 //   click     AXPress when the element supports it, else a real click at its centre
 //   type      popups: open and pick the item; fields: focus, select all, then keystrokes (short text) or a paste that
 //             restores the clipboard (long or multi-line text); returns once the field shows the text
@@ -12,6 +12,7 @@ enum Actuator {
     static let tag = tabEventMarker
 
     static func exec(_ a: Action, pid: pid_t) -> String? {
+        if let w = a.window, !w.isEmpty { raiseWindow(pid: pid, title: w) }
         switch a.op {
         case "key":
             return key(a.value ?? "Return", pid: pid)
@@ -94,7 +95,7 @@ enum Actuator {
             usleep(40_000)
         }
         if text.count > 40 || text.contains("\n") { paste(text, pid: pid) } else { typeKeys(text, pid: pid) }
-        // Wait until the field shows it (apps apply input on their own run loop), then a beat for parsers like Calendar's.
+        // Wait until the field shows it (apps apply input on their own run loop), then a beat for fields that parse what was typed.
         if !text.isEmpty {
             for _ in 0..<30 {
                 if let v: String = AX.attr(el, kAXValueAttribute), v == text || v.contains(text) { break }
@@ -178,6 +179,22 @@ enum Actuator {
     }
 
     // MARK: finding elements, menus, typing
+
+    /// Bring the app's window with this title to the front (steps belong to a window; elements are found in the
+    /// focused one). No-op when it's already focused or no window has that title.
+    static func raiseWindow(pid: pid_t, title: String) {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        if let f = AX.focusedWindow(pid: pid), (AX.attr(f, kAXTitleAttribute) as String?) == title { return }
+        let windows: [AXUIElement] = AX.attr(app, kAXWindowsAttribute) ?? []
+        guard let w = windows.first(where: { (AX.attr($0, kAXTitleAttribute) as String?) == title }) else { return }
+        AXUIElementPerformAction(w, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(w, kAXMainAttribute as CFString, kCFBooleanTrue)
+        for _ in 0..<10 {
+            if let f = AX.focusedWindow(pid: pid), (AX.attr(f, kAXTitleAttribute) as String?) == title { return }
+            usleep(30_000)
+        }
+    }
 
     static func element(pid: pid_t, path want: String) -> AXUIElement? {
         AXSensor.element(pid: pid, path: want)

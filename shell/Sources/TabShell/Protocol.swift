@@ -26,7 +26,6 @@ struct El: Codable, Equatable {
     var enabled: Bool
     var path: String?
     var list: ListRef?
-    // v2 (AXSensor), all optional
     var section: String? = nil // nearest labelled container: "Shipping address"
     var axId: String? = nil
     var placeholder: String? = nil
@@ -44,11 +43,9 @@ struct GridRef: Codable, Equatable {
 
 struct ScreenState: Codable {
     var type = "state"
-    var source: String // "native" (Terminal) | "ax" (any app) | "web"
     var app: String
     var window: String
     var url: String?
-    var focused: Bool
     var elements: [El]
     var seq: Int
     var ts: Double
@@ -59,7 +56,6 @@ struct ScreenState: Codable {
 /// An action the user took in any app, resolved to the element it hit (ActionObserver).
 struct UserEvent: Codable {
     var type = "user_event"
-    var source = "native"
     var app: String
     var window: String?
     var url: String?
@@ -74,6 +70,7 @@ struct UserEvent: Codable {
 final class Action: Codable {
     var op: String
     var app: String
+    var window: String?
     var url: String?
     var targetId: String?
     var targetPath: String?
@@ -99,7 +96,6 @@ struct Ghost: Codable, Equatable {
     var ttlMs: Double?
     var place: String? // "below" (default) | "above" | "right" | "inside"
     var avoid: [Rect]? // nearby interactive elements the pill should not cover (used when `place` is absent)
-    var radius: Double? = nil // the target's CSS corner radius: the box is drawn concentric with it
     var caret: Rect? = nil // text ghost as a completion: draw only ghostText, right after this insertion point
 }
 
@@ -169,7 +165,6 @@ enum ShellToHub: Encodable {
     case accept(ghostId: String)
     case dismiss(ghostId: String)
     case execResult(ghostId: String, ok: Bool, error: String?)
-    case hudClick(item: String) // "ledger" | "contrast"
 
     private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items, paused, sinceMs }
 
@@ -209,9 +204,6 @@ enum ShellToHub: Encodable {
             try c.encode(id, forKey: .ghostId)
             try c.encode(ok, forKey: .ok)
             try c.encodeIfPresent(error, forKey: .error)
-        case .hudClick(let item):
-            try c.encode("hud_click", forKey: .type)
-            try c.encode(item, forKey: .item)
         }
     }
 }

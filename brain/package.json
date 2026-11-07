@@ -14,7 +14,11 @@
     "e2e:canvas": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-canvas.ts"
   },
   "dependencies": {
+    "@x402/core": "^2.30.0",
+    "@x402/evm": "^2.30.0",
+    "@x402/fetch": "^2.30.0",
     "dotenv": "^18.0.7",
+    "viem": "^2.57.16",
     "ws": "^8.22.0"
   },
   "devDependencies": {

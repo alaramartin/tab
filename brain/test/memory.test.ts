@@ -8,7 +8,7 @@ import { Memory } from "../src/memory/store.ts";
 const T0 = 1_700_000_000_000;
 const el = (p: Partial<El> & { id: string }): El => ({ role: "textfield", label: "", rect: { x: 0, y: 0, w: 10, h: 10 }, enabled: true, path: p.id, ...p });
 const state = (app: string, els: El[], ts: number, window = "Form"): ScreenState => ({
-    type: "state", source: "ax", app, window, focused: true, elements: els, seq: 1, ts,
+    type: "state", app, window, elements: els, seq: 1, ts,
 });
 
 test("redact: Luhn cards, SSNs and API keys; leaves ordinary numbers", () => {
