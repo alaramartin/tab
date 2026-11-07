@@ -232,7 +232,8 @@ export class Brain {
      */
     private onUserInput(maybeUnitEnd = false, onPage = false): void {
         if (this.running) return;
-        if (!onPage && this.shown?.action) this.dismissedKey = actionKey(this.shown.action);
+        // Typing on past a completion isn't ignoring it: the next letters just update it.
+        if (!onPage && this.shown?.action && !this.shown.ghost.caret) this.dismissedKey = actionKey(this.shown.action);
         if (this.shown?.action) this.remember(() => this.o.memory?.ghostOutcome(this.shown!.ghost.id, "ignored"));
         this.hide();
         this.modelAbort?.abort(); // the screen is changing: a model answer for the old one is worthless
@@ -381,6 +382,10 @@ export class Brain {
         const center = { x: el.rect.x + el.rect.w / 2, y: el.rect.y + el.rect.h / 2 };
         const empty = !el.value;
         const avoid = nearby(el.rect, active, el.id);
+        // Completing what the user is typing: only the rest, drawn after the insertion point.
+        if (a.op === "type" && !empty && el.caret && a.value && el.value && a.value.length > el.value.length && a.value.toLowerCase().startsWith(el.value.toLowerCase())) {
+            return { id, kind: "text", label: "⇥", rect: el.rect, caret: el.caret, ghostText: a.value.slice(el.value.length) };
+        }
         if (a.op === "type" && empty && (el.role === "textfield" || el.role === "textarea")) {
             return { id, kind: "text", label: "⇥", rect: el.rect, ...(el.radius !== undefined ? { radius: el.radius } : {}), ghostText: a.value, ...(avoid.length ? { avoid } : {}) };
         }

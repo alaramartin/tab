@@ -174,6 +174,25 @@ try {
         await sleep(900);
         const v = (signupWin()?.elements as El[]).find((e) => e.label === "Work email")?.value;
         check(v === "jane@acme.com", `Tab filled it (${v})`);
+
+        // Autocomplete while typing: "Jane" in "Your name" completes to "Jane Doe" (typed into "Full name" before).
+        const yourName = (signupWin()?.elements as El[]).find((e) => e.label === "Your name");
+        if (yourName) {
+            click(yourName);
+            await sleep(300);
+            const mark2 = readFileSync(hubLog, "utf8").length;
+            keys("Jane");
+            let g2 = "";
+            for (let i = 0; i < 30 && !g2; i++) {
+                await sleep(150);
+                g2 = readFileSync(hubLog, "utf8").slice(mark2).split("\n").find((l) => l.includes('"type":"ghost"') && l.includes('"ghostText":" Doe"')) ?? "";
+            }
+            check(!!g2 && g2.includes('"caret"'), `typing "Jane" shows a completion " Doe" at the insertion point`);
+            key(48);
+            await sleep(900);
+            const v2 = (signupWin()?.elements as El[]).find((e) => e.label === "Your name")?.value;
+            check(v2 === "Jane Doe", `Tab completed it (${v2})`);
+        }
     }
 
     // ---- numbering rows: three by hand, Tab for the next, Tab for the rest ----

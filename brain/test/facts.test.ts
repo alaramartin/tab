@@ -57,3 +57,18 @@ test("secure fields and long text never become facts", () => {
     f.observe(typed("Notes", "x".repeat(500), NOW));
     assert.equal(f.size, 0);
 });
+
+test("autocomplete while typing: what was typed before, from the prefix", () => {
+    const f = new FactIndex(null);
+    f.observe(typed("Email", "jane@acme.com", NOW - 86_400_000));
+    f.observe(typed("Email", "jane.doe@gmail.com", NOW - 10 * 86_400_000));
+    f.observe(typed("Search", "javascript closures", NOW - 1000));
+    const field = (v: string) => ({ ...(screen([]).elements[0] ?? {}), id: "desc:Email", path: "desc:Email", role: "textfield" as const, label: "Email", value: v, focused: true, rect: r, enabled: true });
+    assert.equal(f.complete(field("j"), NOW), null, "one letter is not enough");
+    const a = f.complete(field("jane@"), NOW)!;
+    assert.equal(a.value, "jane@acme.com");
+    assert.ok(a.score > 0.6, `"jane@" is unambiguous (${a.score.toFixed(2)})`);
+    const b = f.complete(field("ja"), NOW)!;
+    assert.ok(b.score < a.score, "a short, ambiguous prefix scores lower");
+    assert.equal(f.complete(field("jane@acme.com"), NOW), null, "nothing left to complete");
+});

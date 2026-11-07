@@ -162,6 +162,38 @@ export class FactIndex implements Predictor {
         return { value, score: agree * evidence * Math.min(1, (best.sim - 0.66) / 0.18), n: best.n, sim: best.sim };
     }
 
+    /**
+     * Autocomplete while typing: values typed before (into any field; 3× when it was a field like this one) that start
+     * with what the focused field holds. Confidence grows with the prefix and with how unambiguous it is.
+     */
+    complete(field: El, now: number): { value: string; score: number } | null {
+        const typed = field.value ?? "";
+        if (typed.length < 2 || typed.length > 120 || typed.includes("\n")) return null;
+        const pre = typed.toLowerCase();
+        const name = field.label || field.placeholder || "";
+        const kind = kindOf(name);
+        const qv = this.embedder?.cached(fieldKey(field));
+        const ln = norm(name, false);
+        const votes = new Map<string, { value: string; w: number }>();
+        for (const f of this.facts) {
+            if (f.derived || f.value.length <= typed.length || !f.value.toLowerCase().startsWith(pre) || !fits(kind, f.value)) continue;
+            if (this.rejected.has(`${ln}\n${norm(f.value, false)}`)) continue;
+            const same = f.labelNorm === ln || (qv && f.vec ? cosine(qv, f.vec) >= MIN_SIM : false);
+            const w = (same ? 3 : 1) / (1 + (now - f.ts) / (90 * 86_400_000));
+            const k = f.value.toLowerCase();
+            const v = votes.get(k) ?? { value: f.value, w: 0 };
+            v.w += w;
+            v.value = f.value;
+            votes.set(k, v);
+        }
+        if (!votes.size) return null;
+        const all = [...votes.values()].sort((a, b) => b.w - a.w);
+        const total = all.reduce((x, v) => x + v.w, 0);
+        const best = all[0];
+        const prefixConf = Math.min(1, typed.length / 4); // "ja" is weak evidence, "jane" strong
+        return { value: best.value, score: (best.w / total) * prefixConf * (best.w / (best.w + 0.5)) };
+    }
+
     predict(ctx: PredictContext): Candidate[] {
         const s = ctx.active;
         const fields = this.emptyFields(s);
@@ -174,6 +206,16 @@ export class FactIndex implements Predictor {
             const a: Action = { op: "type", app: s.app, ...(s.url ? { url: s.url } : {}), targetId: e.id, targetPath: e.path, value: hit.value, label: "", confidence: hit.score, source: "pattern" };
             a.label = labelFor(a, e);
             out.push({ action: a, score: hit.score * (e.focused ? 1 : 0.8), tier: "fact", why: `typed into a field like ${describeEl(e)} ${hit.n}× (sim ${hit.sim.toFixed(2)})` });
+        }
+        // The focused field already has text: complete it.
+        const f = s.elements.find((e) => e.focused && FIELD.has(e.role) && !e.secure && e.value);
+        if (f) {
+            const hit = this.complete(f, ctx.now);
+            if (hit && hit.score >= 0.2) {
+                const a: Action = { op: "type", app: s.app, ...(s.url ? { url: s.url } : {}), targetId: f.id, targetPath: f.path, value: hit.value, label: "", confidence: hit.score, source: "pattern" };
+                a.label = labelFor(a, f);
+                out.push({ action: a, score: hit.score, tier: "fact", why: `completes "${f.value}"` });
+            }
         }
         return out.sort((a, b) => b.score - a.score);
     }

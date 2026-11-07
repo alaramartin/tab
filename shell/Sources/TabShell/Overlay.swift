@@ -444,6 +444,7 @@ final class GhostView: NSView {
     private var isMultiline: Bool { (ghost.rect?.h ?? 0) >= 64 }
 
     private var ghostTextFont: NSFont {
+        if ghost.kind == .text, let c = ghost.caret { return .systemFont(ofSize: min(22, max(11, c.h * 0.8))) }
         guard let r = ghost.rect, !isMultiline else { return .systemFont(ofSize: 14) }
         return .systemFont(ofSize: min(20, max(12, r.h * 0.42)))
     }
@@ -473,7 +474,12 @@ final class GhostView: NSView {
     private func layoutPill() -> CGRect {
         let size = pill.size
         var p: CGPoint
-        if ghost.kind == .text, let r = ghost.rect {
+        if ghost.kind == .text, let c = ghost.caret {
+            // Completion: the pill follows the gray text on the same line.
+            let tw = ((ghost.ghostText ?? "") as NSString).size(withAttributes: [.font: ghostTextFont]).width
+            p = CGPoint(x: c.x + c.w + 1 + ceil(tw) + 6, y: c.y + (c.h - size.height) / 2)
+            if p.x + size.width > usable.maxX - style.clamp { p = CGPoint(x: c.x, y: c.y + c.h + style.gap) }
+        } else if ghost.kind == .text, let r = ghost.rect {
             if isMultiline {
                 p = CGPoint(x: r.x + r.w - size.width - 8, y: r.y + r.h - size.height - 8)
             } else {
@@ -582,8 +588,27 @@ final class GhostView: NSView {
 
     // MARK: drawing
 
+    /// Completion: the field already holds what the user typed; draw only the rest, at the insertion point.
+    private var completion: CGRect? {
+        guard ghost.kind == .text, let c = ghost.caret else { return nil }
+        return CGRect(x: c.x, y: c.y, width: c.w, height: c.h)
+    }
+
+    private func drawCompletion(at c: CGRect) {
+        guard let gt = ghost.ghostText, !gt.isEmpty else { return }
+        let font = ghostTextFont
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: style.hc ? NSColor.black : hex(Style.graphite)]
+        if style.hc { attrs[.backgroundColor] = hex(Style.yellow) }
+        let size = (gt as NSString).size(withAttributes: attrs)
+        (gt as NSString).draw(at: CGPoint(x: c.maxX + 1, y: c.midY - size.height / 2), withAttributes: attrs)
+    }
+
     override func draw(_ dirty: NSRect) {
         let k = ghost.kind
+        if let c = completion {
+            drawCompletion(at: c)
+            return
+        }
         if let b = boxRect() {
             let sw = style.boxStroke(k)
             let path = NSBezierPath(roundedRect: b, xRadius: boxCorner, yRadius: boxCorner)

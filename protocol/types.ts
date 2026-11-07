@@ -97,6 +97,7 @@ export interface Ghost {
     avoid?: Rect[]; // other elements near rect; with no `place`, A puts an action/text pill where it covers none of them (pay/blocked stay below)
     ttlMs?: number; // auto-hide, used for 'done'
     dockApp?: string; // STRETCH: a cross-app offer anchors on this bundle id's Dock icon (A resolves the rect; falls back to pillAt)
+    caret?: Rect; // v2: a text ghost that completes what the user is typing: A draws only ghostText, after this insertion point
 }
 
 export interface Hud {

@@ -101,6 +101,7 @@ struct Ghost: Codable, Equatable {
     var avoid: [Rect]? // nearby interactive elements the pill should not cover (used when `place` is absent)
     var radius: Double? = nil // the target's CSS corner radius: the box is drawn concentric with it
     var dockApp: String? = nil // STRETCH: anchor on this bundle id's Dock icon (A resolves the rect)
+    var caret: Rect? = nil // text ghost as a completion: draw only ghostText, right after this insertion point
 }
 
 struct TabDid: Codable, Equatable {
