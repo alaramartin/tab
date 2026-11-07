@@ -7,6 +7,7 @@
 //
 //   npm run eval                        all steps in ~/.tab/memory.db (TAB_MEMORY_FILE to override)
 //   npm run eval -- --since 7d --app com.apple.mail --tiers habit,pattern --json out.json
+//   default tiers: habit, pattern, sequence (add fact with --tiers habit,pattern,sequence,fact: starts the embedder)
 //   npm run eval -- --model lfm|qwen [--model-every N] [--max-steps N]   add the local LLM tier (llama-server)
 //
 // Reports, per tier, the ladder (best candidate across tiers) and per app:
@@ -26,6 +27,7 @@ import { LocalModelTier } from "../src/predict/local.ts";
 import { genericCandidates } from "../src/predict/generic.ts";
 import { LlamaServer, MODELS } from "../src/runtime/llama.ts";
 import { Ladder } from "../src/predict/ladder.ts";
+import { SequenceTier } from "../src/predict/sequence.ts";
 import { SituationIndex } from "../src/memory/situations.ts";
 
 const args = process.argv.slice(2);
@@ -56,6 +58,7 @@ const TIERS: Record<string, () => Predictor> = {
     habit: () => new HabitModel(),
     pattern: () => new PatternTier(),
     fact: () => new FactIndex(new Embedder(null)),
+    sequence: () => new SequenceTier(),
 };
 
 /** Did the candidate predict this step? Same op, same element (by path, else by signature), same value. */
@@ -81,7 +84,7 @@ function matches(a: Action, step: StepRow, active: ScreenState): boolean {
 type Rec = { app: string; tier: string; score: number; correct: boolean; top3: boolean; ms: number; ts?: number };
 
 const mem = new Memory(process.env.TAB_MEMORY_FILE || DEFAULT_MEMORY_FILE);
-const tiers = (flag("--tiers") ?? "habit,pattern").split(",").map((t) => TIERS[t]?.() ?? (() => { throw new Error(`no tier ${t}`); })());
+const tiers = (flag("--tiers") ?? "habit,pattern,sequence").split(",").map((t) => TIERS[t]?.() ?? (() => { throw new Error(`no tier ${t}`); })());
 const modelName = flag("--model");
 const modelEvery = Number(flag("--model-every") ?? 1);
 const maxSteps = Number(flag("--max-steps") ?? Infinity);
