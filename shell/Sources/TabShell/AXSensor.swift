@@ -281,25 +281,30 @@ enum AXSensor {
 
     /// Snapshot of `pid`'s focused window. Interactive elements first (focused one first of all), then text, ≤ maxEls.
     static func state(pid: pid_t, bundleId: String, seq: Int, limits: Limits = Limits()) -> ScreenState? {
+        stateAndRefs(pid: pid, bundleId: bundleId, seq: seq, limits: limits)?.0
+    }
+
+    /// The snapshot plus each element's AXUIElement (same order), so later changes to one element can be patched in.
+    static func stateAndRefs(pid: pid_t, bundleId: String, seq: Int, limits: Limits = Limits()) -> (ScreenState, [AXUIElement])? {
         guard let w = AX.focusedWindow(pid: pid) else { return nil }
-        var controls: [El] = [], texts: [El] = []
+        var controls: [(El, AXUIElement)] = [], texts: [(El, AXUIElement)] = []
         var url: String?
         var nodes = 0
         walk(window: w, limits: limits) { n in
             nodes += 1
             if n.info.role == "AXWebArea", url == nil, let u: URL = AX.attr(n.el, "AXURL") { url = u.absoluteString }
             if let e = makeEl(n, includeText: texts.count < limits.maxText) {
-                if e.role == "text" { texts.append(e) } else { controls.append(e) }
+                if e.role == "text" { texts.append((e, n.el)) } else { controls.append((e, n.el)) }
             }
             return controls.count < limits.maxEls
         }
         // The focused element and its neighbourhood matter most; keep them if we have to cut.
-        if let fi = controls.firstIndex(where: { $0.focused == true }), fi > 0 { controls.insert(controls.remove(at: fi), at: 0) }
-        let els = Array((controls + texts).prefix(limits.maxEls))
+        if let fi = controls.firstIndex(where: { $0.0.focused == true }), fi > 0 { controls.insert(controls.remove(at: fi), at: 0) }
+        let all = Array((controls + texts).prefix(limits.maxEls))
         let title = (AX.attr(w, kAXTitleAttribute) as String?) ?? ""
-        var st = ScreenState(source: "ax", app: bundleId, window: title, url: url, focused: true, elements: els, seq: seq, ts: nowMs())
+        var st = ScreenState(source: "ax", app: bundleId, window: title, url: url, focused: true, elements: all.map(\.0), seq: seq, ts: nowMs())
         st.nodes = nodes
-        return st
+        return (st, all.map(\.1))
     }
 
     /// Find an element by the path a snapshot gave it.
@@ -370,13 +375,13 @@ final class AXPoller {
     private func attach(_ t: (pid_t, String)?) {
         if let o = observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(o), .defaultMode) }
         observer = nil
-        queue.async { self.target = t.map { (pid: $0.0, bundleId: $0.1) }; self.lastSig = nil }
+        queue.async { self.target = t.map { (pid: $0.0, bundleId: $0.1) }; self.lastSig = nil; self.lastState = nil; self.lastRefs = [] }
         guard let (pid, bid) = t, AXIsProcessTrusted() else { return }
         queue.async { AXSensor.enableTree(pid: pid, bundleId: bid) }
         var obs: AXObserver?
-        let cb: AXObserverCallback = { _, _, _, refcon in
+        let cb: AXObserverCallback = { _, el, note, refcon in
             guard let refcon else { return }
-            Unmanaged<AXPoller>.fromOpaque(refcon).takeUnretainedValue().changed()
+            Unmanaged<AXPoller>.fromOpaque(refcon).takeUnretainedValue().changed(el, note as String)
         }
         guard AXObserverCreate(pid, cb, &obs) == .success, let obs else { return }
         let app = AXUIElementCreateApplication(pid)
@@ -388,6 +393,39 @@ final class AXPoller {
     }
 
     private var lastTick: CFAbsoluteTime = 0
+    private var lastState: ScreenState?
+    private var lastRefs: [AXUIElement] = []
+
+    /// Typing in a big window: the notification names the element whose value changed. If the last snapshot has it,
+    /// patch its value and caret (~1 ms) and send that right away; a full walk follows 300 ms later for anything
+    /// structural (a suggestion list appearing). Everything else takes the normal path.
+    func changed(_ el: AXUIElement, _ note: String) {
+        guard note == kAXValueChangedNotification || note == kAXSelectedTextChangedNotification else { return changed() }
+        queue.async {
+            guard var st = self.lastState, let i = self.lastRefs.firstIndex(where: { CFEqual($0, el) }), i < st.elements.count else { return self.changed() }
+            let info = AXInfo(el)
+            // Only typing is patched; a checkbox, a slider or a selection change takes the normal (fast) full path.
+            guard ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(info.role), !AXSensor.isSecure(info) else { return self.changed() }
+            if let v = info.stringValue {
+                st.elements[i].value = v.count <= 2000 ? v : AXSensor.window(of: v, around: info.focused ? AXSensor.caretOffset(el) : nil)
+            }
+            if st.elements[i].focused == true { st.elements[i].caret = AXSensor.caret(el) }
+            self.seq += 1
+            st.seq = self.seq
+            st.ts = nowMs()
+            self.lastState = st
+            DispatchQueue.main.async { self.onState?(st) }
+            self.fullSoon()
+        }
+    }
+
+    private var fullPending: DispatchWorkItem?
+    private func fullSoon() {
+        fullPending?.cancel()
+        let w = DispatchWorkItem { [weak self] in self?.lastTick = CFAbsoluteTimeGetCurrent(); self?.tick() }
+        fullPending = w
+        queue.asyncAfter(deadline: .now() + 0.3, execute: w)
+    }
 
     /// Coalesce bursts of notifications (typing posts one per key) into one snapshot. The first change after a quiet
     /// moment goes out after 30 ms (a click's result, fast); changes during a burst every 100 ms (CPU).
@@ -412,7 +450,9 @@ final class AXPoller {
         guard let target, AXIsProcessTrusted() else { return }
         seq += 1
         let t0 = CFAbsoluteTimeGetCurrent()
-        guard var st = AXSensor.state(pid: target.pid, bundleId: target.bundleId, seq: seq) else { return }
+        guard let (snap, refs) = AXSensor.stateAndRefs(pid: target.pid, bundleId: target.bundleId, seq: seq) else { return }
+        var st = snap
+        lastRefs = refs
         // Icon-only controls get names from the vision model (cached by image hash; unknown ones go to the hub).
         let iconReqs = IconLabeler.apply(&st, pid: target.pid)
         if !iconReqs.isEmpty { DispatchQueue.main.async { self.onIconRequest?(iconReqs) } }
@@ -444,6 +484,7 @@ final class AXPoller {
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         let sig = st.window + "\n" + (st.url ?? "") + "\n" + st.elements.map { "\($0.id)|\($0.value ?? "")|\($0.checked.map { "\($0)" } ?? "")|\($0.focused == true)|\(Int($0.rect.x)),\(Int($0.rect.y))" }.joined(separator: "\n")
         onSnapshotMs?(ms, st.elements.count)
+        lastState = st
         if sig == lastSig { return }
         lastSig = sig
         DispatchQueue.main.async { self.onState?(st) }
