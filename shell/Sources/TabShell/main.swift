@@ -126,6 +126,9 @@ final class Shell: NSObject, InputTapDelegate {
     lazy var actions = ActionObserver(ax: ax)
     private var lastHud = Hud()
     private var statusItem: NSStatusItem?
+    /// Paused: nothing is read, recorded or suggested (menu bar → Pause Tab).
+    private(set) var paused = false
+    private var pauseItem: NSMenuItem?
     private var showHudItem: NSMenuItem?
     private var contrastItem: NSMenuItem?
 
@@ -155,9 +158,9 @@ final class Shell: NSObject, InputTapDelegate {
         let termReader = ProcessInfo.processInfo.environment["TAB_TERM_READER"] != nil
         ax.skip = termReader ? terminalApps : []
         if !termReader { terminal.onState = nil }
-        ax.onState = { [weak self] s in self?.hub.send(.state(s)) }
-        ax.onIconRequest = { [weak self] items in self?.hub.send(.iconRequest(items)) }
-        actions.onEvent = { [weak self] e in self?.hub.send(.userEvent(e)) }
+        ax.onState = { [weak self] s in if self?.paused == false { self?.hub.send(.state(s)) } }
+        ax.onIconRequest = { [weak self] items in if self?.paused == false { self?.hub.send(.iconRequest(items)) } }
+        actions.onEvent = { [weak self] e in if self?.paused == false { self?.hub.send(.userEvent(e)) } }
     }
 
     func start() {
@@ -196,6 +199,14 @@ final class Shell: NSObject, InputTapDelegate {
         reset.target = self
         menu.addItem(reset)
         // High Contrast menu item removed (human's call, 14:40): suggestions are bright red by default instead.
+        let pause = NSMenuItem(title: "Pause Tab", action: #selector(togglePause), keyEquivalent: "")
+        pause.target = self
+        menu.addItem(pause)
+        pauseItem = pause
+        let forget = NSMenuItem(title: "Forget the Last Hour", action: #selector(forgetHour), keyEquivalent: "")
+        forget.target = self
+        menu.addItem(forget)
+        menu.addItem(.separator())
         let rv = NSMenuItem(title: "Reveal Totals", action: #selector(revealTotals), keyEquivalent: "")
         rv.target = self
         menu.addItem(rv)
@@ -229,6 +240,22 @@ final class Shell: NSObject, InputTapDelegate {
     @objc private func toggleContrast() { hudClicked("contrast") }
 
     @objc private func revealTotals() { hudClicked("reveal") }
+
+    @objc private func togglePause() {
+        paused.toggle()
+        pauseItem?.title = paused ? "Resume Tab" : "Pause Tab"
+        if paused { overlay.hide() } else { ax.invalidate() }
+        statusItem?.button?.image = NSImage(systemSymbolName: paused ? "pause.circle" : "arrow.right.to.line", accessibilityDescription: "Tab")
+        statusItem?.button?.image?.isTemplate = true
+        hub.send(.paused(paused))
+        log(paused ? "paused: nothing is read, recorded or suggested" : "resumed")
+    }
+
+    @objc private func forgetHour() {
+        hub.send(.forget(sinceMs: 3_600_000))
+        overlay.hide()
+        log("forget: asked the hub to delete the last hour")
+    }
 
     @objc private func quit() { NSApp.terminate(nil) }
 
@@ -266,6 +293,8 @@ final class Shell: NSObject, InputTapDelegate {
 
     private func handle(_ m: HubToShell) {
         switch m {
+        case .ghost(_) where paused:
+            break
         case .ghost(var g):
             // STRETCH: a cross-app offer sits on that app's Dock icon, pill above it.
             if let bid = g.dockApp, let icon = NativeApp.dockIcon(bid) {
@@ -373,6 +402,7 @@ final class Shell: NSObject, InputTapDelegate {
     }
 
     func tapObserved(kind: RawInput.Kind, keyCode: Int64, flags: CGEventFlags, chars: String, location: CGPoint, ts: Double) {
+        if paused { return }
         guard let app = NSWorkspace.shared.frontmostApplication, let bid = appId(app) else { return }
         if kind == .click, ownRects.contains(where: { $0.contains(location) }) { return }
         actions.observe(RawInput(kind: kind, keyCode: keyCode, flags: flags, chars: chars, location: location,

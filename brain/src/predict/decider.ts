@@ -28,10 +28,11 @@ export function toPast(h: HistEntry): PastStep {
 
 export class LocalDecider implements Decider {
     readonly name: string;
-    readonly habits = new HabitModel();
-    readonly situations = new SituationIndex();
+    habits = new HabitModel();
+    situations = new SituationIndex();
     readonly ladder = new Ladder();
-    readonly facts: FactIndex;
+    facts: FactIndex;
+    private embedder: Embedder | null;
     readonly sequence = new SequenceTier();
     private preparing: AbortController | null = null;
     readonly server: LlamaServer | null;
@@ -49,9 +50,18 @@ export class LocalDecider implements Decider {
         if (cloud.enabled) console.log(`[decider] long text is written by ${cloud.model} (TAB_CLOUD=1)`);
         this.model = this.server ? new LocalModelTier(this.server, { cloud }) : null;
         const embedder = opts.embed === false ? null : new Embedder(opts.memory?.db ?? null);
-        this.facts = new FactIndex(embedder?.available ? embedder : null);
+        this.embedder = embedder?.available ? embedder : null;
+        this.facts = new FactIndex(this.embedder);
         this.name = `local:habits${this.server ? `+${this.server.spec.name}` : ""}${this.ladder.fitted ? " (fitted ladder)" : ""}`;
-        // Warm start: everything memory has seen, in order.
+        this.rebuild(opts.memory ?? null);
+    }
+
+    /** Learn everything memory has seen, in order (at start, and after a forget). */
+    rebuild(memory: Memory | null): void {
+        this.habits = new HabitModel();
+        this.situations = new SituationIndex();
+        this.facts = new FactIndex(this.embedder);
+        const opts = { memory };
         if (opts.memory) {
             const t0 = performance.now();
             const steps = opts.memory.steps();

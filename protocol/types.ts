@@ -146,6 +146,8 @@ export type ShellToHub =
     | ScreenState // native (Terminal) or ax (any app)
     | UserEvent // native: resolved actions in any app
     | { type: "icon_request"; items: { hash: string; png: string }[] } // crops of unlabeled icons (base64 PNG)
+    | { type: "paused"; paused: boolean } // menu bar → Pause Tab: no prediction until resumed
+    | { type: "forget"; sinceMs: number } // menu bar → Forget the Last Hour
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }
     | { type: "dismiss"; ghostId: string }

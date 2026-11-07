@@ -164,13 +164,15 @@ enum ShellToHub: Encodable {
     case state(ScreenState)
     case userEvent(UserEvent)
     case iconRequest([IconLabeler.Request])
+    case paused(Bool)
+    case forget(sinceMs: Double)
     case input(kind: String) // "key" | "click"
     case accept(ghostId: String)
     case dismiss(ghostId: String)
     case execResult(ghostId: String, ok: Bool, error: String?)
     case hudClick(item: String) // "ledger" | "contrast"
 
-    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items }
+    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items, paused, sinceMs }
 
     func encode(to encoder: Encoder) throws {
         if case .state(let s) = self { return try s.encode(to: encoder) }
@@ -185,6 +187,12 @@ enum ShellToHub: Encodable {
             try c.encode(app, forKey: .app)
             try c.encode(window, forKey: .window)
         case .state, .userEvent: break
+        case .paused(let p):
+            try c.encode("paused", forKey: .type)
+            try c.encode(p, forKey: .paused)
+        case .forget(let ms):
+            try c.encode("forget", forKey: .type)
+            try c.encode(ms, forKey: .sinceMs)
         case .iconRequest(let items):
             try c.encode("icon_request", forKey: .type)
             try c.encode(items, forKey: .items)

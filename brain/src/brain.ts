@@ -57,6 +57,7 @@ export class Brain {
     private stateWaiters: { key: string; resolve: () => void }[] = [];
     private modelCache: { key: string; action: Action | null } | null = null;
     private modelAbort: AbortController | null = null;
+    private paused = false;
 
     constructor(private o: BrainOpts) {
         this.pattern = new PatternEngine({ file: o.workflowsFile ?? null });
@@ -121,6 +122,21 @@ export class Brain {
                 if (m.app === CHROME && this.store.webLive()) break;
                 this.onUserEvent(m);
                 break;
+            case "paused":
+                this.paused = !!m.paused;
+                if (this.paused) this.hide();
+                break;
+            case "forget": {
+                const since = Date.now() - Number(m.sinceMs ?? 3_600_000);
+                this.remember(() => {
+                    const n = this.o.memory?.forget({ since }) ?? 0;
+                    this.history.entries = this.history.entries.filter((e) => e.ts < since);
+                    this.o.decider?.rebuild?.(this.o.memory ?? null);
+                    console.log(`[memory] forgot ${n} steps since ${new Date(since).toLocaleTimeString()}`);
+                });
+                this.hide();
+                break;
+            }
             case "icon_request":
                 if (this.o.nameIcons && Array.isArray(m.items) && m.items.length)
                     this.o.nameIcons(m.items).then(
@@ -256,7 +272,7 @@ export class Brain {
     }
 
     private async predict(gen: number): Promise<void> {
-        if (this.running) return;
+        if (this.running || this.paused) return;
         if (this.payment) return this.paying === this.payment.paymentId ? undefined : this.showPayment(this.payment);
         const active = this.store.active();
         if (!active) return;

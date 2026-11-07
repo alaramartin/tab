@@ -58,3 +58,41 @@ test("the Brain shows a habit ghost on an AX screen without waiting for idle", a
     assert.ok(ghosts.some((g) => g.label.startsWith("Click Archive")), ghosts.map((g) => g.label).join(" | ") || "no ghost");
     assert.deepEqual(ghosts.at(-1).rect, r, "the ghost sits on the AX element's rect");
 });
+
+test("forget the last hour: steps go from memory, and habits learned from them go too", async () => {
+    const { Memory } = await import("../src/memory/store.ts");
+    const mem = new Memory(":memory:");
+    const now = Date.now();
+    for (let i = 0; i < 6; i++) {
+        mem.addStep({ ts: now - 30 * 60_000 + i * 8000, app: MAIL, window: "Inbox – 12 messages", op: "click", by: "user", target: el("Reply") });
+        mem.addStep({ ts: now - 30 * 60_000 + i * 8000 + 4000, app: MAIL, window: "Inbox – 12 messages", op: "click", by: "user", target: el("Archive") });
+    }
+    const d = new LocalDecider({ memory: mem, model: null, embed: false });
+    (d as any).ladder = new Ladder(null);
+    const shell: HubToShell[] = [];
+    const b = new Brain({ immediate: true, decider: d, memory: mem, sendShell: (m) => shell.push(m), sendWeb: (_m: HubToWeb) => {} });
+    b.fromShell({ type: "frontmost", app: MAIL, window: "Inbox" });
+    b.fromShell(mail(now - 2000));
+    b.fromShell({ type: "user_event", source: "native", app: MAIL, kind: "click", target: el("Reply"), ts: now - 1000 });
+    b.fromShell(mail(now));
+    await b.predictNow();
+    assert.ok(shell.some((m) => m.type === "ghost"), "the habit is offered before");
+    b.fromShell({ type: "forget", sinceMs: 3_600_000 });
+    assert.equal(mem.steps().length, 0);
+    shell.length = 0;
+    b.fromShell({ type: "user_event", source: "native", app: MAIL, kind: "click", target: el("Reply"), ts: Date.now() });
+    b.fromShell(mail(Date.now() + 1));
+    await b.predictNow();
+    assert.ok(!shell.some((m) => m.type === "ghost" && (m as any).ghost.label.startsWith("Click Archive")), "and not after");
+});
+
+test("paused: no ghosts", async () => {
+    const d = decider();
+    const shell: HubToShell[] = [];
+    const b = new Brain({ immediate: true, decider: d, sendShell: (m) => shell.push(m), sendWeb: (_m: HubToWeb) => {} });
+    b.fromShell({ type: "paused", paused: true });
+    b.fromShell({ type: "frontmost", app: MAIL, window: "Inbox" });
+    b.fromShell(mail(Date.now()));
+    await b.predictNow();
+    assert.ok(!shell.some((m) => m.type === "ghost"));
+});

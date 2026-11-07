@@ -54,6 +54,8 @@ export interface Decider {
     observe?(h: HistEntry): void;
     /** What happened to a ghost this decider suggested (dismissals teach it what not to offer). */
     feedback?(a: Action, outcome: "accepted" | "dismissed", target?: El): void;
+    /** Memory changed underneath (forget): relearn from what is left. */
+    rebuild?(memory: import("./memory/store.ts").Memory | null): void;
     /** A screen arrived: prepare for it in the background (embed its fields), so predicting on it is fast. */
     see?(s: ScreenState): void;
 }
