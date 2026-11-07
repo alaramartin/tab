@@ -1,5 +1,5 @@
 // npm run flow4 [-- N] — flow 4's model steps on C's real captured pages (protocol/fixtures), N calls each.
-// Offline (no screen); calls Jev. Reports min/median confidence per step against the 0.6 bar.
+// Offline (no screen); calls the decider (local by default). Reports min/median confidence per step against the 0.6 bar.
 import { config } from "dotenv";
 import { readFileSync } from "node:fs";
 import type { ScreenState } from "../../protocol/types.ts";
@@ -37,7 +37,7 @@ const steps = [
     { name: "4 Text me", s: form("4471-209", "Oak St", "5:30 pm", false), h: [h("type", "Pickup location", "Oak St"), h("click", "5:30 pm")], want: /Text me when ready/ },
     { name: "5 Request", s: form("4471-209", "Oak St", "5:30 pm", true), h: [h("click", "5:30 pm"), h("click", "Text me when ready")], want: /Request refill/ },
 ];
-const d = makeDecider()!;
+const d = (await makeDecider())!;
 let worst = 1;
 for (const st of steps) {
     const confs: number[] = [];

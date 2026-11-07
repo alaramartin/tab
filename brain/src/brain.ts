@@ -2,14 +2,13 @@
 // Transport-free so the websocket server, replay, and tests can all drive it.
 import type { Action, El, Ghost, HubToShell, HubToWeb, PaymentRequired, Rect, ScreenState, UserEvent } from "../../protocol/types.ts";
 import { countStep, newHud } from "./counters.ts";
-import { History, toTarget } from "./history.ts";
+import { History, toTarget, type HistEntry } from "./history.ts";
 import { log } from "./log.ts";
 import type { Decider } from "./model.ts";
 import { PatternEngine, type PatternAction, type Step } from "./pattern.ts";
 import { CHROME, contentSig, findEl, StateStore, stateKey } from "./state.ts";
-import { calendarOffer, eventFrom } from "./calendar.ts";
+import type { Memory } from "./memory/store.ts";
 
-const CALENDAR_OFFER_DELAY_MS = Number(process.env.TAB_CALENDAR_OFFER_MS ?? 1800); // after "Paid ✓" (1500 ms)
 /** STRETCH: native steps take this many times as long, so the audience can follow (human's call: 10% slower). */
 const NATIVE_PACE = Number(process.env.TAB_NATIVE_PACE ?? 1.1);
 
@@ -30,6 +29,8 @@ export interface BrainOpts {
     immediate?: boolean;
     /** Where learned workflows are saved (`~/.tab/workflows.json` in the hub); omit for memory only (tests). */
     workflowsFile?: string | null;
+    /** Action memory (~/.tab/memory.db in the hub); omit in tests that don't need it. */
+    memory?: Memory | null;
     onPredict?(info: { source: "pattern" | "model"; latencyMs: number; action: Action | null }): void;
 }
 
@@ -53,6 +54,7 @@ export class Brain {
     private execWaiters = new Map<string, (r: { ok: boolean; error?: string }) => void>();
     private stateWaiters: { key: string; resolve: () => void }[] = [];
     private modelCache: { key: string; action: Action | null } | null = null;
+    private modelAbort: AbortController | null = null;
 
     constructor(private o: BrainOpts) {
         this.pattern = new PatternEngine({ file: o.workflowsFile ?? null });
@@ -78,6 +80,24 @@ export class Brain {
         this.sendHud();
     }
 
+    private pushHistory(e: HistEntry): void {
+        this.history.push(e);
+        try {
+            this.o.decider?.observe?.(e);
+        } catch (err) {
+            console.error("[decider] observe:", (err as Error).message);
+        }
+    }
+
+    /** Memory writes never break prediction: a failed write is logged and dropped. */
+    private remember(f: () => unknown): void {
+        try {
+            f();
+        } catch (err) {
+            console.error("[memory]", (err as Error).message);
+        }
+    }
+
     // ---------- inbound ----------
 
     fromShell(m: any): void {
@@ -93,6 +113,11 @@ export class Brain {
                 break;
             case "state":
                 this.onState(m);
+                break;
+            case "user_event":
+                // AX reads of Chrome duplicate what CDP reports when it's connected: let C speak for its pages then.
+                if (m.app === CHROME && this.store.webLive()) break;
+                this.onUserEvent(m);
                 break;
             case "input":
                 this.hud.youDid++;
@@ -142,7 +167,12 @@ export class Brain {
     // ---------- state & input ----------
 
     private onState(s: ScreenState): void {
+        if (s.source === "ax" && s.app === CHROME && this.store.webLive()) return; // CDP speaks for Chrome
         this.store.put(s);
+        this.remember(() => this.o.memory?.putState(s));
+        try {
+            this.o.decider?.see?.(s);
+        } catch {}
         const key = stateKey(s);
         this.stateWaiters = this.stateWaiters.filter((w) => (w.key === key ? (w.resolve(), false) : true));
         if (this.running) return;
@@ -170,10 +200,14 @@ export class Brain {
         if (this.running || Date.now() < this.echoUntil) return; // our own exec, echoed back by the page
         if (e.kind === "focus") return;
         const op = e.kind === "navigate" ? "navigate" : e.kind;
-        this.history.push({
+        this.remember(() =>
+            this.o.memory?.addStep({ ts: e.ts, app: e.app, window: e.window, url: e.url, op, by: "user", target: e.target, value: e.value, before: e.before, partial: e.partial }),
+        );
+        this.pushHistory({
             op,
             app: e.app,
             url: e.url,
+            window: e.window ?? this.store.forStep(e.app, e.url)?.window ?? (this.store.frontmost?.app === e.app ? this.store.frontmost.window : undefined),
             target: e.target ? toTarget(e.target) : undefined,
             value: e.value,
             ts: e.ts,
@@ -190,7 +224,9 @@ export class Brain {
     private onUserInput(maybeUnitEnd = false, onPage = false): void {
         if (this.running) return;
         if (!onPage && this.shown?.action) this.dismissedKey = actionKey(this.shown.action);
+        if (this.shown?.action) this.remember(() => this.o.memory?.ghostOutcome(this.shown!.ghost.id, "ignored"));
         this.hide();
+        this.modelAbort?.abort(); // the screen is changing: a model answer for the old one is worthless
         this.lastInputTs = Date.now();
         this.gen++;
         this.schedule(maybeUnitEnd ? DEBOUNCE_MS : IDLE_MS);
@@ -236,11 +272,20 @@ export class Brain {
             if (shown) return;
         }
 
-        // 2. Model, only after the user has been idle. Never for native apps other than Terminal (STRETCH: Calendar
-        // screens stay on this Mac; their steps come from the calendar offer, not the model).
-        if (active.source === "native" && !/terminal|iterm/i.test(active.app)) return;
+        // 2. The decider: its fast tiers (habits, ~1 ms) may show a confident ghost right away; the local model runs only
+        // after the user has paused, and is aborted as soon as anything changes.
         const decider = this.o.decider;
         if (!decider) return;
+        if (decider.fast) {
+            const t3 = performance.now();
+            const fa = decider.fast({ active, others: this.store.recent(now), history: this.history.entries });
+            const fMs = performance.now() - t3;
+            if (fa) {
+                const shown = this.maybeShow(fa, gen, fMs);
+                this.logPred(gen, "pattern", fMs, fa, shown);
+                if (shown) return;
+            }
+        }
         if (!this.o.immediate) {
             const wait = this.lastInputTs + IDLE_MS - Date.now();
             if (wait > 0) {
@@ -259,13 +304,15 @@ export class Brain {
             const t1 = performance.now();
             try {
                 this.hud.modelCalls++;
+                this.modelAbort?.abort();
+                const ctl = (this.modelAbort = new AbortController());
                 action = await decider.decide({
                     active,
                     others: this.store.recent(Date.now()),
                     history: this.history.entries,
-                });
+                }, ctl.signal);
             } catch (err) {
-                console.error(`[model] ${decider.name}:`, (err as Error).message);
+                if ((err as Error).name !== "AbortError") console.error(`[model] ${decider.name}:`, (err as Error).message);
                 action = null;
             }
             ms = performance.now() - t1;
@@ -285,6 +332,7 @@ export class Brain {
         const ghost = this.buildGhost(a);
         if (!ghost) return false;
         this.shown = { ghost, action: a };
+        this.remember(() => this.o.memory?.ghostShown({ id: ghost.id, ts: Date.now(), action: a, latencyMs }));
         this.hud.shown++;
         this.hud.mode = "shown";
         this.hud.lastSource = a.source;
@@ -308,9 +356,13 @@ export class Brain {
 
         const el = this.ghostTarget(a);
         if (!el) {
-            // Cross-app offers (open a URL; STRETCH: a sequence that starts in another app) anchor near the last click.
-            if (a.op !== "navigate" && a.op !== "sequence") return null;
-            const near = this.lastClickedRect();
+            // Offers without a target of their own (open a URL, a key, a sequence that starts in another app) anchor at
+            // the insertion point of the focused field (a terminal prompt), else near the last click.
+            if (a.op !== "navigate" && a.op !== "sequence" && a.op !== "key") return null;
+            const focused = active?.elements.find((e) => e.focused);
+            const caret = focused?.caret;
+            if (caret) return { id, kind: "action", label, pillAt: { x: caret.x, y: caret.y + caret.h + 34 } };
+            const near = this.lastClickedRect() ?? (focused && focused.rect.w > 0 ? { ...focused.rect, y: focused.rect.y + focused.rect.h - 60, h: 0 } : undefined);
             // STRETCH: a sequence that starts in another native app points at that app's Dock icon.
             const first = a.op === "sequence" ? (a.steps as Step[] | undefined)?.[0] : undefined;
             const dock = first && first.app !== CHROME && first.app !== active?.app ? { dockApp: first.app } : {};
@@ -389,6 +441,7 @@ export class Brain {
             return;
         }
         if (!s.action) return;
+        this.remember(() => this.o.memory?.ghostOutcome(ghostId, "accepted"));
         this.hud.accepted++;
         const steps: Step[] = s.action.op === "sequence" ? (s.action.steps as Step[]) : [s.action];
         const ok = await this.run(ghostId, steps);
@@ -407,6 +460,11 @@ export class Brain {
             this.payment = null;
         }
         if (s.action) this.dismissedKey = actionKey(s.action);
+        this.remember(() => this.o.memory?.ghostOutcome(ghostId, "dismissed"));
+        if (s.action) {
+            const a = s.action;
+            this.remember(() => this.o.decider?.feedback?.(a, "dismissed", findEl(this.store.forStep(a.app, a.url), a.targetId, a.targetPath)));
+        }
         this.hide();
     }
 
@@ -471,9 +529,13 @@ export class Brain {
                 const r = await this.exec(`${ghostId}:${k}`, action, step.op === "switch_app" ? "shell" : step.app === CHROME ? "web" : "shell");
                 if (!r.ok) throw new Error(`step ${k} ${step.op}: ${r.error}`);
                 countStep(this.hud, action, target);
-                this.history.push({
+                this.remember(() =>
+                    this.o.memory?.addStep({ ts: Date.now(), app: action.app, url: step.url, op: action.op, by: "tab", target, value: action.value, ghostId }),
+                );
+                this.pushHistory({
                     op: action.op,
                     app: action.app,
+                    window: this.store.forStep(action.app, step.url)?.window,
                     url: step.url ?? this.store.active()?.url,
                     target: target ? toTarget(target) : undefined,
                     value: action.value,
@@ -600,27 +662,10 @@ export class Brain {
         const radius = this.radiusAt(rect);
         if (radius !== undefined) ghost.radius = radius;
         if (r.ok && r.txHash && r.explorerUrl) this.hud.lastTx = { hash: r.txHash, explorerUrl: r.explorerUrl, amountUsd: p?.amountUsd ?? "" };
-        if (r.ok && p) this.offerCalendarAfter(p);
         this.shown = r.ok ? null : { ghost, paymentId: r.paymentId };
         this.o.sendShell({ type: "ghost", ghost });
         this.hud.mode = r.ok ? "idle" : "shown";
         this.sendHud();
-    }
-
-    // ---------- STRETCH: cross-app memory (Calendar) ----------
-
-    /** After the "Paid ✓" ghost fades, offer to put what was bought into Calendar (if the page has a day and time). */
-    private offerCalendarAfter(p: PaymentRequired): void {
-        const host = (() => { try { return new URL(p.url).host; } catch { return ""; } })();
-        const page = this.store.recent(Date.now()).find((s) => s.source === "web" && s.url && new URL(s.url).host === host);
-        const ev = page && eventFrom(page);
-        if (!ev) return;
-        const offer = calendarOffer(ev);
-        setTimeout(() => {
-            if (this.running || this.payment || this.shown) return;
-            const gen = ++this.gen;
-            this.maybeShow(offer, gen, 0);
-        }, CALENDAR_OFFER_DELAY_MS);
     }
 
     // ---------- misc ----------

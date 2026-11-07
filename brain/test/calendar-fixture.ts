@@ -1,8 +1,10 @@
+// Test fixture (was src/calendar.ts, the hackathon's hardcoded Calendar beat): a real 7-step native sequence that
+// exercises the runner's waits, optional steps, unlessPresent guards and switch-back on failure.
 // STRETCH (branch stretch/calendar-native; never merge into main without explicit human permission):
 // cross-app memory. After a paid order for something with a day and time on the page, offer to add it to Calendar.
 import type { ScreenState } from "../../protocol/types.ts";
-import type { PatternAction, Step } from "./pattern.ts";
-import { CHROME } from "./state.ts";
+import type { PatternAction, Step } from "../src/pattern.ts";
+import { CHROME } from "../src/state.ts";
 
 export const CALENDAR = "com.apple.iCal";
 /** The calendar Tab files demo events into (human's choice: a dedicated calendar, never their own). */

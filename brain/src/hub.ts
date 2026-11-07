@@ -5,6 +5,7 @@ import type { HubToShell, HubToWeb } from "../../protocol/types.ts";
 import { Brain } from "./brain.ts";
 import { makeDecider } from "./model.ts";
 import { DEFAULT_WORKFLOWS_FILE } from "./pattern.ts";
+import { DEFAULT_MEMORY_FILE, Memory } from "./memory/store.ts";
 
 config({ path: new URL("../../.env", import.meta.url).pathname });
 
@@ -21,12 +22,32 @@ function out(to: "shell" | "web", m: HubToShell | HubToWeb): void {
     if (m.type !== "hud") console.log(`→ ${to} ${s.length > 200 ? s.slice(0, 200) + "…" : s}`);
 }
 
-const decider = makeDecider();
+const memoryFile = process.env.TAB_MEMORY_FILE || DEFAULT_MEMORY_FILE;
+const memory = process.env.TAB_MEMORY === "off" ? null : new Memory(memoryFile);
+// Consolidate memory (old screens out, deltas re-keyed) at start and every 6 hours.
+const consolidate = () => {
+    if (!memory) return;
+    try {
+        const r = memory.consolidate();
+        if (r.screens + r.steps) console.log(`[memory] consolidated: ${r.screens} old screens, ${r.steps} old steps removed (${r.rekeyed} re-keyed)`);
+    } catch (err) {
+        console.error("[memory] consolidate:", (err as Error).message);
+    }
+};
+consolidate();
+setInterval(consolidate, 6 * 3_600_000).unref();
+const decider = await makeDecider({ memory });
+// Load the local model in the background so the first prediction doesn't wait for it.
+(decider as { warm?: () => Promise<void> } | null)?.warm?.().then(
+    () => console.log(`[decider] ${decider!.name} ready`),
+    (err: Error) => console.error(`[decider] model failed to start: ${err.message}`),
+);
 const brain = new Brain({
     sendShell: (m) => out("shell", m),
     sendWeb: (m) => out("web", m),
     decider,
     workflowsFile: process.env.TAB_WORKFLOWS_FILE || DEFAULT_WORKFLOWS_FILE,
+    memory,
     onPredict: ({ source, latencyMs, action }) =>
         console.log(`[predict] ${source} ${latencyMs.toFixed(1)} ms → ${action ? `${action.label} (${action.confidence})` : "none"}`),
 });
@@ -55,7 +76,7 @@ wss.on("connection", (ws) => {
         }
         // Tools can impersonate either side: {"as":"shell"|"web", ...msg}
         const from = role === "tool" ? m.as ?? "web" : role;
-        if (m.type !== "state") console.log(`← ${from} ${String(data).slice(0, 200)}`);
+        if (m.type !== "state" && m.type !== "user_event") console.log(`← ${from} ${String(data).slice(0, 200)}`);
         try {
             if (from === "shell") brain.fromShell(m);
             else if (from === "web") brain.fromWeb(m);
@@ -71,5 +92,5 @@ wss.on("connection", (ws) => {
     });
 });
 
-console.log(`hub listening on ws://127.0.0.1:${PORT} · model: ${decider?.name ?? "none"}`);
+console.log(`hub listening on ws://127.0.0.1:${PORT} · model: ${decider?.name ?? "none"} · memory: ${memory ? memoryFile : "off"}`);
 process.on("unhandledRejection", (err) => console.error("[hub] unhandled:", err));

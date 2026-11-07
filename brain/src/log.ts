@@ -21,8 +21,14 @@ export const log = {
     prediction(p: PredLog): void {
         if (this.enabled) appendFileSync(predictions, JSON.stringify(p) + "\n");
     },
-    /** Every incoming message, for `npm run replay`. */
+    /**
+     * Every incoming message, for `npm run replay`. AX states and native user events (any app, typed text) are left
+     * out unless TAB_SESSION_LOG=full: memory.db keeps them, redacted and deduplicated.
+     */
     incoming(from: string, msg: unknown): void {
-        if (this.enabled) appendFileSync(session, JSON.stringify({ ts: Date.now(), from, msg }) + "\n");
+        if (!this.enabled) return;
+        const m = msg as { type?: string; source?: string };
+        if (process.env.TAB_SESSION_LOG !== "full" && (m?.source === "ax" || (m?.type === "user_event" && m?.source === "native"))) return;
+        appendFileSync(session, JSON.stringify({ ts: Date.now(), from, msg }) + "\n");
     },
 };

@@ -25,8 +25,8 @@ const pharmacy: ScreenState = {
     ],
 };
 
-const d = makeDecider();
-if (!d) throw new Error("no model: set JEV_API_KEY in .env");
+const d = (await makeDecider());
+if (!d) throw new Error("no decider (TAB_DECIDER=none?)");
 console.log(`decider: ${d.name}`);
 const times: number[] = [];
 for (let i = 0; i < n; i++) {

@@ -69,8 +69,8 @@ const cases: { name: string; active: ScreenState; others: ScreenState[]; history
     { name: "pharmacy 5: submit", active: pharm("4471-209", "Oak St", "5:30 pm", true), others: [inbox], history: [h("click", "5:30 pm"), h("click", "Text me when ready")], expect: /Click Request refill/ },
 ];
 
-const d = makeDecider();
-if (!d) throw new Error("no model: set JEV_API_KEY in .env");
+const d = (await makeDecider());
+if (!d) throw new Error("no decider (TAB_DECIDER=none?)");
 let pass = 0;
 for (const c of cases) {
     const t = performance.now();

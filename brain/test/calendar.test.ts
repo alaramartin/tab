@@ -1,10 +1,9 @@
-// STRETCH (branch stretch/calendar-native): cross-app memory into Calendar.
+// The sequence runner on a real native 7-step sequence (the hackathon's Calendar beat, now a test fixture).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HubToShell, HubToWeb, PaymentRequired, ScreenState } from "../../protocol/types.ts";
-process.env.TAB_CALENDAR_OFFER_MS = "0"; // read when brain.ts loads, so set it before the dynamic imports
 const { Brain } = await import("../src/brain.ts");
-const { CALENDAR, calendarOffer, eventFrom } = await import("../src/calendar.ts");
+const { CALENDAR, calendarOffer, eventFrom } = await import("./calendar-fixture.ts");
 const { log } = await import("../src/log.ts");
 log.enabled = false;
 const r = { x: 0, y: 0, w: 10, h: 10 };
@@ -33,26 +32,6 @@ test("offer: Add Event → quick event text → Return → Tab Demo → Return �
     ]);
     assert.equal(o.steps.at(-1)?.onFail, true);
     assert.equal(o.steps.at(-2)?.unlessPresent, "id:title-field");
-});
-
-test("hub offers it after a paid order, and never asks the model about Calendar screens", async () => {
-    const shell: HubToShell[] = [];
-    const calls: string[] = [];
-    const b = new Brain({ immediate: true, decider: { name: "fake", decide: async (m) => (calls.push(m.active.app), null) }, sendShell: (m) => shell.push(m), sendWeb: (_m: HubToWeb) => {} });
-    b.fromShell({ type: "frontmost", app: "com.google.Chrome", window: "Checkout" });
-    b.fromWeb(checkout("Checkout · Night Owls · Hall 9", ["Night Owls", "Friday 9 pm, Hall 9, Dock Road", "Total", "$0.30"]));
-    const p: PaymentRequired = { type: "payment_required", paymentId: "p1", url: "http://tickets.localhost:4001/api/buy?qty=2", method: "POST", payeeDomain: "tickets.localhost", payTo: "0x", amountUsd: "0.30", network: "n", asset: "a", verdict: { ok: true }, anchorRect: r };
-    b.fromWeb(p);
-    b.fromShell({ type: "accept", ghostId: (shell.filter((m) => m.type === "ghost").at(-1) as any).ghost.id });
-    b.fromWeb({ type: "payment_result", paymentId: "p1", ok: true, txHash: "0x1", explorerUrl: "https://x/tx/0x1" });
-    await new Promise((res) => setTimeout(res, 20));
-    const labels = shell.filter((m) => m.type === "ghost").map((m) => (m as any).ghost.label);
-    assert.ok(labels.includes("Add Night Owls · Fri 9pm to Calendar ⇥"), labels.join(" | "));
-
-    b.fromShell({ type: "frontmost", app: CALENDAR, window: "Calendar" });
-    b.fromShell({ type: "state", source: "native", app: CALENDAR, window: "Calendar", focused: true, seq: 1, ts: Date.now(), elements: [{ id: "desc:Add Event", role: "button", label: "Add Event", rect: r, enabled: true, path: "desc:Add Event" }] });
-    await b.predictNow();
-    assert.ok(!calls.includes(CALENDAR), "model never sees Calendar");
 });
 
 test("sequence waits until QuickEventCell holds the typed text before Return", async () => {

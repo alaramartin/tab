@@ -4,9 +4,9 @@ export const CHROME = "com.google.Chrome";
 // PLAN says 120 s, but C only re-emits on change, so static pages (release notes, inbox) go stale fast.
 export const CACHE_MS = 600_000;
 
-/** Web states are keyed by URL, native states by app. */
-export function stateKey(s: { app: string; url?: string }): string {
-    return s.app === CHROME && s.url ? s.url : s.app;
+/** Web (CDP) states are keyed by URL; native and AX states by app (an AX read of Chrome is one state per app). */
+export function stateKey(s: { app: string; url?: string; source?: string }): string {
+    return s.app === CHROME && s.url && s.source !== "ax" ? s.url : s.app;
 }
 
 /** Content signature: ignores rects, so window moves and scrolls don't re-trigger prediction. */
@@ -20,7 +20,10 @@ export class StateStore {
     private byKey = new Map<string, ScreenState>();
     frontmost: { app: string; window: string } | null = null;
 
+    lastWebTs = 0;
+
     put(s: ScreenState): void {
+        if (s.source === "web") this.lastWebTs = Date.now();
         this.byKey.set(stateKey(s), s);
         if (s.source === "web" && s.focused) {
             // Only one web tab can be focused; clear the flag on the others.
@@ -40,9 +43,14 @@ export class StateStore {
             let best: ScreenState | undefined;
             for (const s of this.byKey.values())
                 if (s.source === "web" && s.focused && (!best || s.ts > best.ts)) best = s;
-            return best;
+            return best ?? this.byKey.get(CHROME); // no CDP: Chrome read through AX like any app
         }
         return this.byKey.get(app);
+    }
+
+    /** The CDP side is connected and reporting (then it, not AX, speaks for Chrome). */
+    webLive(now = Date.now()): boolean {
+        return now - this.lastWebTs < CACHE_MS;
     }
 
     /** States seen within CACHE_MS, newest first. */

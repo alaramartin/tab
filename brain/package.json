@@ -12,7 +12,11 @@
     "flow4": "tsx tools/flow4-fixtures.ts",
     "drive": "tsx tools/drive.ts",
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "memory": "node --no-warnings=ExperimentalWarning --import tsx tools/memory.ts",
+    "eval": "node --no-warnings=ExperimentalWarning --import tsx tools/eval.ts",
+    "e2e": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-testbed.ts",
+    "e2e:canvas": "node --no-warnings=ExperimentalWarning --import tsx tools/e2e-canvas.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

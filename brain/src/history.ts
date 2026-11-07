@@ -6,12 +6,18 @@ export interface HistTarget {
     role: Role;
     label: string;
     list?: El["list"];
+    // v2: what element signatures (memory/sig.ts) need
+    section?: string;
+    axId?: string;
+    grid?: El["grid"];
+    placeholder?: string;
 }
 
 export interface HistEntry {
     op: Op; // never "sequence": sequences are recorded step by step
     app: string;
     url?: string;
+    window?: string; // v2: native steps (habit templates are per kind of screen)
     target?: HistTarget;
     value?: string;
     ts: number;
@@ -46,5 +52,9 @@ export class History {
 }
 
 export function toTarget(el: El): HistTarget {
-    return { id: el.id, path: el.path, role: el.role, label: el.label, list: el.list };
+    return {
+        id: el.id, path: el.path, role: el.role, label: el.label, list: el.list,
+        ...(el.section ? { section: el.section } : {}), ...(el.axId ? { axId: el.axId } : {}),
+        ...(el.grid ? { grid: el.grid } : {}), ...(el.placeholder ? { placeholder: el.placeholder } : {}),
+    };
 }

@@ -12,7 +12,6 @@
     "wallets": "tsx scripts/new-wallets.ts",
     "tempo-wallets": "tsx scripts/tempo-wallets.ts",
     "try": "tsx scripts/try.ts",
-    "warm": "tsx scripts/warm.ts",
     "fold": "node scripts/fold.mjs",
     "look": "tsx scripts/look.ts",
     "typecheck": "tsc --noEmit"

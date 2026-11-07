@@ -22,7 +22,7 @@ let at = 0;
 
 const brain = new Brain({
     immediate: true,
-    decider: noModel ? null : makeDecider(),
+    decider: noModel ? null : await makeDecider(),
     sendShell: (m) => {
         if (m.type === "ghost") console.log(`  ghost  ${m.ghost.kind.padEnd(7)} ${m.ghost.label}`);
     },

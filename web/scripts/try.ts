@@ -274,7 +274,7 @@ async function flow4() {
     await inbox.close();
     const c = await tabFor("http://pharmacy.localhost:4005/refill");
     frontmost();
-    // Like flow 1: a step whose ghost doesn't come (no model key, slow Jev) is done by hand, so the payment still gets checked.
+    // Like flow 1: a step whose ghost doesn't come (no model, or a slow one) is done by hand, so the payment still gets checked.
     const steps: [string, string, string, () => Promise<unknown>][] = [
         ["4471-209", "Rx 4471-209", `document.getElementById("rx").value === "4471-209"`, () => typeInto(c, "#rx", "4471-209")],
         ["Oak St", "Select Oak St", `document.getElementById("loc").value === "Oak St"`, () => choose(c, "#loc", "Oak St")],
