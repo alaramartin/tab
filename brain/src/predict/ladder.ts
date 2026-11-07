@@ -59,7 +59,7 @@ export class Ladder {
     }
 
     features(by: Partial<Record<Tier, number>>, a: Action, modelRank?: number, pNone?: number): number[] {
-        const habit = by.habit ?? 0, pattern = by.pattern ?? 0, model = by.model ?? 0, fact = by.fact ?? 0;
+        const habit = by.habit ?? 0, pattern = Math.max(by.pattern ?? 0, by.sequence ?? 0), // a sequence is a pattern model = by.model ?? 0, fact = by.fact ?? 0;
         const tiers = Object.values(by).filter((v) => (v ?? 0) > 0).length;
         return [
             1, habit, pattern, model, modelRank === 0 ? 1 : 0, Math.max(habit, pattern, fact), tiers,

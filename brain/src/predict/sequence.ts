@@ -33,7 +33,7 @@ export function valueRule(vals: string[]): ((n: number) => string) | null {
 }
 
 export class SequenceTier implements Predictor {
-    readonly tier = "pattern" as const;
+    readonly tier = "sequence" as const;
 
     predict(ctx: PredictContext): Candidate[] {
         const s = ctx.active;
@@ -79,7 +79,7 @@ export class SequenceTier implements Predictor {
             a.label = labelFor(a, e);
             return a;
         };
-        const out: Candidate[] = [{ action: act(el, next(1)), score: conf, tier: "pattern", why: `continues ${run.map((r) => r.value).join(", ")}` }];
+        const out: Candidate[] = [{ action: act(el, next(1)), score: conf, tier: "sequence", why: `continues ${run.map((r) => r.value).join(", ")}` }];
 
         // After three in a row, the rest of the column in one go.
         if (gridded && run.length >= 3) {
@@ -93,7 +93,7 @@ export class SequenceTier implements Predictor {
                 const label = `Fill the remaining ${steps.length} (${steps[0].value} … ${steps[steps.length - 1].value})`;
                 // Confirmed four times (e.g. three by hand and one accepted Tab): the batch leads.
                 const score = run.length >= 4 ? Math.min(0.99, conf + 0.02) : conf * 0.98;
-                out.push({ action: { op: "sequence", app: s.app, steps, label, confidence: score, source: "pattern" }, score, tier: "pattern", why: label });
+                out.push({ action: { op: "sequence", app: s.app, steps, label, confidence: score, source: "pattern" }, score, tier: "sequence", why: label });
             }
         }
         return out;
