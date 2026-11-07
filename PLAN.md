@@ -145,6 +145,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
     - A new fast tier, similar moments: after a step in one app, it offers what followed a similar step in other apps.
     - In windows Accessibility can't read, Vision finds icon-sized shapes (contours), and the icon namer names them. `TabShell --vision-selftest` checks this offscreen.
     - Chores test windows (`--testbed --chores`) and `npm run e2e:chores`.
+    - A changed checkbox, slider or popup is patched in place like typing, so its screen goes out without a full walk.
 
 ### How we worked
 
@@ -170,7 +171,8 @@ Once v2 worked, everything that existed only for the hackathon or as an alternat
 ```
 TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
   AXSensor        the front window   ──▶    memory.db (SQLite: screens, steps, ghosts, facts)
-  VisionSensor    OCR, icons                fast predictions: chores, sequences, habits, form facts   ~1 ms
+  VisionSensor    OCR, icons                fast predictions: chores, sequences, habits, form facts,
+                                            similar moments in other apps                             ~1 ms
   ActionObserver  your clicks, typing       local LLM (Qwen3-1.7B on llama.cpp), after a pause       ~0.4 s
   Actuator        click / type / key  ◀──   one calibrated score per suggestion; a ghost above 0.6
   Overlay, HUD    the ghost                 payments (x402)
