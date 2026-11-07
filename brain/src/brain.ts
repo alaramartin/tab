@@ -9,6 +9,8 @@ import { PatternEngine, type PatternAction, type Step } from "./pattern.ts";
 import { fmtUsd, intentCheck } from "./pay/intent.ts";
 import { parseChallenge, pay, type Paid } from "./pay/x402.ts";
 import { contentSig, findEl, StateStore, stateKey } from "./state.ts";
+import { deriveProvenance } from "./memory/provenance.ts";
+import { toPast } from "./predict/decider.ts";
 
 const DEBOUNCE_MS = 40; // fast tiers take ~1 ms: predict as soon as a screen settles
 const IDLE_MS = 600; // model ghosts wait for this much quiet
@@ -201,10 +203,14 @@ export class Brain {
 
     private onUserEvent(e: UserEvent): void {
         if (this.running || Date.now() < this.echoUntil) return; // our own steps, reported back
+        const prov = e.kind === "type" && e.value && !e.partial && !e.target?.secure
+            ? deriveProvenance(e.value, e.target, e.ts, this.store.recent(e.ts), this.history.entries.map(toPast))
+            : undefined;
         this.remember(() =>
-            this.o.memory?.addStep({ ts: e.ts, app: e.app, window: e.window, url: e.url, op: e.kind, by: "user", target: e.target, value: e.value, before: e.before, partial: e.partial }),
+            this.o.memory?.addStep({ ts: e.ts, app: e.app, window: e.window, url: e.url, op: e.kind, by: "user", target: e.target, value: e.value, before: e.before, partial: e.partial, prov }),
         );
         this.pushHistory({
+            prov,
             op: e.kind,
             app: e.app,
             url: e.url,

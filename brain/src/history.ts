@@ -1,4 +1,5 @@
 import type { El, Op, Role } from "../../protocol/types.ts";
+import type { Provenance } from "./memory/provenance.ts";
 
 export interface HistTarget {
     id: string;
@@ -20,6 +21,7 @@ export interface HistEntry {
     window?: string; // habit templates are per kind of screen
     target?: HistTarget;
     value?: string;
+    prov?: Provenance;
     ts: number;
     by: "user" | "tab";
 }

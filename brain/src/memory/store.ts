@@ -38,6 +38,7 @@ export interface StepIn {
     value?: string;
     before?: string;
     partial?: boolean;
+    prov?: unknown;
     ghostId?: string;
 }
 
@@ -58,6 +59,7 @@ export interface StepRow {
     episode: number;
     ghost_id: string | null;
     partial: number;
+    prov: any;
     screen_kind: string;
 }
 
@@ -81,7 +83,8 @@ CREATE TABLE IF NOT EXISTS steps (
     id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, app TEXT NOT NULL, window TEXT, url TEXT, screen_kind TEXT,
     op TEXT NOT NULL, by TEXT NOT NULL, target_sig TEXT, target TEXT, value TEXT, before_value TEXT,
     before_snap TEXT, after_snap TEXT, episode INTEGER, ghost_id TEXT,
-    partial INTEGER DEFAULT 0 -- type in a long text: value = inserted span, before_value = text just before it
+    partial INTEGER DEFAULT 0, -- type in a long text: value = inserted span, before_value = text just before it
+    prov TEXT -- type steps: where the value came from (memory/provenance.ts)
 );
 CREATE INDEX IF NOT EXISTS steps_ts ON steps(ts);
 CREATE INDEX IF NOT EXISTS steps_sig ON steps(target_sig);
@@ -124,8 +127,8 @@ export class Memory {
             snapRead: this.db.prepare("SELECT hash, app, window, url, data, base FROM snapshots WHERE hash = ?"),
             snapDepth: this.db.prepare("SELECT depth FROM snapshots WHERE hash = ?"),
             stepPut: this.db.prepare(
-                `INSERT INTO steps (ts, app, window, url, screen_kind, op, by, target_sig, target, value, before_value, before_snap, episode, ghost_id, partial)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO steps (ts, app, window, url, screen_kind, op, by, target_sig, target, value, before_value, before_snap, episode, ghost_id, partial, prov)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             ),
             stepAfter: this.db.prepare("UPDATE steps SET after_snap = ? WHERE id = ? AND after_snap IS NULL"),
             epNew: this.db.prepare("INSERT INTO episodes (start_ts, end_ts, app, window, n_steps) VALUES (?, ?, ?, ?, 0)"),
@@ -230,6 +233,7 @@ export class Memory {
             ep,
             st.ghostId ?? null,
             st.partial ? 1 : 0,
+            st.prov && !secure ? JSON.stringify(st.prov) : null,
         );
         const id = Number(r.lastInsertRowid);
         const list = this.awaitingAfter.get(snapKey) ?? [];
@@ -282,7 +286,7 @@ export class Memory {
         if (opts.until !== undefined) (where.push("ts < ?"), args.push(opts.until));
         if (opts.app) (where.push("app = ?"), args.push(opts.app));
         const sql = `SELECT * FROM steps ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY ts, id ${opts.limit ? "LIMIT " + Math.floor(opts.limit) : ""}`;
-        return (this.db.prepare(sql).all(...args) as any[]).map((r) => ({ ...r, target: r.target ? JSON.parse(r.target) : null }));
+        return (this.db.prepare(sql).all(...args) as any[]).map((r) => ({ ...r, target: r.target ? JSON.parse(r.target) : null, prov: r.prov ? JSON.parse(r.prov) : null }));
     }
 
     stats(): { snapshots: number; seen: number; steps: number; episodes: number; ghosts: number; bytes: number; byApp: { app: string; n: number }[] } {

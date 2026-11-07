@@ -21,7 +21,7 @@ export function toPast(h: HistEntry): PastStep {
     const target: El | undefined = t
         ? { id: t.id, path: t.path, role: t.role, label: t.label, list: t.list, section: t.section, axId: t.axId, grid: t.grid, placeholder: t.placeholder, rect: { x: 0, y: 0, w: 0, h: 0 }, enabled: true }
         : undefined;
-    return { ts: h.ts, app: h.app, url: h.url, window: h.window, op: h.op, by: h.by, target, value: h.value };
+    return { ts: h.ts, app: h.app, url: h.url, window: h.window, op: h.op, by: h.by, target, value: h.value, prov: h.prov };
 }
 
 export class LocalDecider implements Decider {
@@ -62,7 +62,7 @@ export class LocalDecider implements Decider {
             const t0 = performance.now();
             const steps = opts.memory.steps();
             for (const r of steps) {
-                const s: PastStep = { ts: r.ts, app: r.app, window: r.window ?? undefined, url: r.url ?? undefined, op: r.op as Action["op"], by: r.by, target: r.target ?? undefined, value: r.value ?? undefined };
+                const s: PastStep = { ts: r.ts, app: r.app, window: r.window ?? undefined, url: r.url ?? undefined, op: r.op as Action["op"], by: r.by, target: r.target ?? undefined, value: r.value ?? undefined, prov: r.prov ?? undefined };
                 this.habits.observe(s);
                 this.facts.observe(s);
             }

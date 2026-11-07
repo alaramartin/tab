@@ -1,6 +1,7 @@
 // The prediction ladder's common shapes. Every tier takes the same context and returns scored
 // candidates; the live brain and the offline eval (tools/eval.ts) drive tiers through exactly this interface.
 import type { Action, El, ScreenState } from "../../../protocol/types.ts";
+import type { Provenance } from "../memory/provenance.ts";
 
 /** A past action, as the ladder sees it (live: from History + memory; eval: from memory.db steps). */
 export interface PastStep {
@@ -12,6 +13,7 @@ export interface PastStep {
     by: "user" | "tab";
     target?: El;
     value?: string;
+    prov?: Provenance; // type steps: where the value came from
 }
 
 export interface PredictContext {
