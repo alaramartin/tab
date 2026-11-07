@@ -1,6 +1,6 @@
 # Tab
 
-> **Status:** v2 in progress on the `more-work` branch. The hackathon proof of concept is on `main`. Follow [@alara_martin_](https://x.com/alara_martin_) for updates.
+> **Status:** v2, in progress. The hackathon proof of concept it grew out of is frozen at [alaramartin/paradigmhacks](https://github.com/alaramartin/paradigmhacks). Follow [@alara_martin_](https://x.com/alara_martin_) for updates.
 
 Tab predicts your next action on your Mac and shows it as a ghost: a highlight on the button you're about to click, or gray text in the field you're about to fill. Press **Tab** to do it. Press **Esc** to dismiss it.
 
@@ -76,6 +76,6 @@ Settings:
 
 ## Hackathon version
 
-The hackathon version on `main` paid HTTP 402 paywalls (x402 and MPP on testnets) from the ghost, after checking that the amount matched the page. That code is still here under `web/` (Chrome over CDP, payments, demo sites) and still works. On this branch it's optional: without it, Chrome is read through Accessibility like every other app.
+The hackathon version ([paradigmhacks](https://github.com/alaramartin/paradigmhacks)) paid HTTP 402 paywalls (x402 and MPP on testnets) from the ghost, after checking that the amount matched the page. That code is still here under `web/` (Chrome over CDP, payments, demo sites) and still works. Here it's optional: without it, Chrome is read through Accessibility like every other app.
 
 Testnet only. Never commit keys.

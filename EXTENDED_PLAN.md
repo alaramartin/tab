@@ -2,7 +2,7 @@
 
 ## Context
 
-Tab today is a hackathon proof of concept (branch `more-work`, identical to `main`). It works in three places, each wired by hand:
+Tab today is a hackathon proof of concept (the hackathon repo, alaramartin/paradigmhacks). It works in three places, each wired by hand:
 - **Chrome** through CDP plus an injected script (`web/src/inject.js`).
 - **Terminal**, read-only, through `shell/.../TerminalReader.swift`.
 - **Calendar**, an allow-listed app (`NativeApp.swift`, `nativeApps = ["com.apple.iCal"]`) running one hardcoded 7-step sequence (`brain/src/calendar.ts`).
@@ -367,3 +367,7 @@ The combiner keeps separate weights for fast-only and full candidates. `npm run 
 - Record a few days of real use, then `npm run eval -- --model qwen --fit` to fit the combiner on real data.
 - Opt-in cloud only for long text: today, `TAB_DECIDER=claude` swaps the whole decider instead.
 - Incremental AX refresh for very large windows (55–62 ms snapshots in Chrome and VS Code).
+
+### 2026-11-07: moved to its own repo
+
+v2 now lives at [alaramartin/tab](https://github.com/alaramartin/tab), on `main`, with the full history. alaramartin/paradigmhacks is frozen at the hackathon version, and its `more-work` branch is deleted. The progress entries above say `more-work`: that's this repo's `main` now.
