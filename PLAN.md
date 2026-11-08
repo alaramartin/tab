@@ -8,14 +8,16 @@ This file records how Tab was planned and built. It has five parts: what's still
 
 ## 1. Still to do
 
-1. **Notice payment requests in any app.** The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
-2. **Design the HUD.** It's a placeholder: status, last payment, and an expandable Tab did / You did.
-3. **Run the end-to-end tests that haven't run.** `npm run e2e:chores` (teach once, repeat, then do the remaining) is written but has never run. The same goes for patching a changed checkbox, slider or popup in place (`AXSensor.changed`), which has never run on a live window. `npm run e2e` last failed because the Mac was in use.
-4. **Values from facts and transforms.** Each typed value records whether it was copied from a screen, continued a sequence, repeated an earlier one, or was new. A value from a known fact or a transform (case, a date format) is still recorded as new.
-5. **Re-walk only what changed.** A changed value patches its one element. A structural change (a list appears, a dialog opens) still walks the whole window, and big windows hit the 80 ms budget. Walking just the subtree means numbering paths within it, since paths are numbered across the whole window today.
-6. **Canvas content beyond icons.** Vision finds text and icon-sized shapes. Larger things on a canvas (diagram boxes, images, game pieces) aren't elements yet.
-7. **Learn from real use.** Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-8. **Search memory from the app.** Past tasks are searchable by meaning (`npm run memory -- search`), but only from the command line.
+Items marked *(needs you)* need a decision or the Mac to yourself. The rest a session can do alone.
+
+1. **Notice payment requests in any app.** *(needs you: pick the approach)* The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
+2. **Design the HUD.** *(needs you)* It's a placeholder: status, last payment, and an expandable Tab did / You did (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
+3. **Run the end-to-end tests.** *(needs you away from the Mac: they move the mouse and type)* `npm run e2e:chores` (teach once, repeat, then do the remaining) is written but has never run. Patching a changed checkbox, slider or popup in place (`AXSensor.changed`) has never run on a live window; `npm run e2e` covers it. `npm run e2e` last failed because the Mac was in use; `npm run e2e:canvas` passes. First rebuild and relaunch TabShell (`shell/scripts/build-shell.sh --run`), and leave port 7800 free (no hub running).
+4. **Values from facts and transforms.** Each typed value records whether it was copied from a screen, continued a sequence, repeated an earlier one, or was new (`brain/src/memory/provenance.ts`). A value from a known fact or a transform (case, a date format) is still recorded as new.
+5. **Re-walk only what changed.** A changed value patches its one element (`AXPoller.changed` in `AXSensor.swift`). A structural change (a list appears, a dialog opens) still walks the whole window (`AXSensor.walk`), and big windows hit the 80 ms budget. Walking just the subtree means numbering paths within it, since paths are numbered across the whole window today.
+6. **Canvas content beyond icons.** Vision finds text and icon-sized shapes (`VisionSensor.objects`, 12–96 pt). Larger things on a canvas (diagram boxes, images, game pieces) aren't elements yet.
+7. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
+8. **Search memory from the app.** Past tasks are searchable by meaning (`npm run memory -- search`, `searchEpisodes` in `brain/src/memory/episodes.ts`), but only from the command line. The menu bar (`main.swift`) is the obvious place.
 9. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
 
 ---
@@ -86,7 +88,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 
 **Decisions made up front:**
 - M-series Macs with 16 GB or more.
-- Local-first, with Claude as an opt-in only for long text.
+- Local-first, with Claude as an opt-in only for long text (removed later: Tab is local only).
 - Chrome read through Accessibility like any other app, with CDP optional.
 - Always-on recording, with a denylist and never password fields.
 
@@ -137,7 +139,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 10. **Cleanup and privacy.**
     - The Calendar beat became a test fixture, Terminal is read through AX, and URLs on screen became "Open …" candidates.
     - Logs hold no values by default.
-    - The opt-in Claude tier (`TAB_CLOUD=1`) is used for long text only.
+    - The opt-in Claude tier (`TAB_CLOUD=1`) was limited to long text, then removed in the simplifying pass below.
 
 11. **Later the same day (Nov 7).**
     - Each typed value records where it came from: copied from a screen, the next in a sequence, typed before, or new. A habit whose value is always copied from the same field fills that field's current value.
@@ -200,5 +202,15 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 | `npm run memory -- forget --app <id>` | Deletes what was recorded for an app (`--since 2h` deletes by time) |
 | `npm run memory -- search <words>` | Finds past tasks by meaning |
 | `npm run send -- --listen` | Prints everything the hub sends |
+
+### Rules for working on Tab
+
+- **Everything stays on the Mac.** Nothing a user does may reach a server: models run locally, and there's no telemetry and no cloud option.
+- **Tests never touch your own apps.** End-to-end tests use TabShell's own windows (`--testbed`). TextEdit, Notes and Mail sync or autosave to iCloud.
+- **Commit and push as you go**, to `main` of [alaramartin/tab](https://github.com/alaramartin/tab), and only after `npx tsc --noEmit` and `npm test` pass in `brain/` (and `swift build` in `shell/` for shell changes). The local folder is still named `paradigmhacks`. Never push to alaramartin/paradigmhacks, which is frozen.
+- **No keys in the repo.** `PAYER_PRIVATE_KEY` lives in `.env`, testnet only.
+- **Code and docs describe what is, not what was.** History goes in commit messages and sections 2 and 3 of this file.
+
+### Shell tools
 
 `TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions.
