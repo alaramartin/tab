@@ -3,7 +3,7 @@
 #   rec/session.sh up     quit normal Chrome, plain wallpaper, no desktop icons, start hub + demo sites + web + debug Chrome + TabShell
 #   rec/session.sh down   stop what `up` started, restore wallpaper and desktop icons, reopen normal Chrome
 set -u
-REPO=/Users/alara/Projects/paradigmhacks
+REPO=/Users/alara/Projects/tab
 HERE=${0:A:h}
 STATE=$HERE/takes/.session
 LOGS=$HERE/takes

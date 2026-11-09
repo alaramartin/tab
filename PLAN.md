@@ -207,7 +207,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 
 - **Everything stays on the Mac.** Nothing a user does may reach a server: models run locally, and there's no telemetry and no cloud option.
 - **Tests never touch your own apps.** End-to-end tests use TabShell's own windows (`--testbed`). TextEdit, Notes and Mail sync or autosave to iCloud.
-- **Commit and push as you go**, to `main` of [alaramartin/tab](https://github.com/alaramartin/tab), and only after `npx tsc --noEmit` and `npm test` pass in `brain/` (and `swift build` in `shell/` for shell changes). The local folder is still named `paradigmhacks`. Never push to alaramartin/paradigmhacks, which is frozen.
+- **Commit and push as you go**, to `main` of [alaramartin/tab](https://github.com/alaramartin/tab), and only after `npx tsc --noEmit` and `npm test` pass in `brain/` (and `swift build` in `shell/` for shell changes). Never push to alaramartin/paradigmhacks, which is frozen.
 - **No keys in the repo.** `PAYER_PRIVATE_KEY` lives in `.env`, testnet only.
 - **Code and docs describe what is, not what was.** History goes in commit messages and sections 2 and 3 of this file.
 

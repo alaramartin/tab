@@ -3,7 +3,7 @@
 #   rec/session.sh up     quit normal Chrome, clean desktop + wallpaper, start debug Chrome, web, TabShell, reset demo
 #   rec/session.sh down   restore wallpaper and desktop icons (demo services keep running)
 set -u
-REPO=/Users/alara/Projects/paradigmhacks
+REPO=/Users/alara/Projects/tab
 HERE=${0:A:h}
 STATE=$HERE/takes/.session
 mkdir -p $HERE/takes
