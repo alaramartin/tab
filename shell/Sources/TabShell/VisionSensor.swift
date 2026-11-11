@@ -81,7 +81,7 @@ enum VisionSensor {
         var counts: [String: Int] = [:]
         var newRects: [String: Rect] = [:]
         var textRects: [Rect] = []
-        var lines: [(text: String, rect: Rect)] = []
+        var lines: [(text: String, rect: Rect, at: Int)] = [] // OCR lines and their index in `out`
         func add(_ base: String, role: String, label: String, rect r: Rect, help: String? = nil) {
             let n = counts[base, default: 0]
             counts[base] = n + 1
@@ -108,7 +108,7 @@ enum VisionSensor {
             let words = text.split(separator: " ").count
             let role = words <= 4 && text.count <= 32 ? "button" : "text"
             add("ocr:" + String(text.prefix(60)), role: role, label: String(text.prefix(80)), rect: r)
-            lines.append((text, r))
+            lines.append((text, r, out.count - 1))
         }
         let t2 = CFAbsoluteTimeGetCurrent()
         var reqs: [IconLabeler.Request] = []
@@ -122,12 +122,18 @@ enum VisionSensor {
             if let request { reqs.append(request) }
             add("vis:" + hash, role: "button", label: label ?? "", rect: r, help: label == nil ? nil : "icon, named by vision")
         }
-        // A shape with text in it is named by that text ("Login service"); one without is named like an icon.
+        // A shape with one line of text in it is that line's element, grown to the whole shape (a canvas button, a diagram
+        // box). One with several lines is named by all of them; one without is named like an icon.
         for r in found.shapes.prefix(max(0, maxEls - out.count)) {
             guard let c = crop(r) else { continue }
             let inside = lines.filter { l in l.rect.x >= r.x - 2 && l.rect.y >= r.y - 2 && l.rect.x + l.rect.w <= r.x + r.w + 2 && l.rect.y + l.rect.h <= r.y + r.h + 2 }
             let text = inside.map(\.text).joined(separator: " ")
-            if !text.isEmpty {
+            if inside.count == 1, let path = out[inside[0].at].path {
+                out[inside[0].at].rect = r
+                out[inside[0].at].role = "button"
+                out[inside[0].at].help = "shape on the canvas"
+                newRects[path] = r
+            } else if !text.isEmpty {
                 guard let hash = IconLabeler.dHash(c) else { continue }
                 add("vis:" + hash, role: "button", label: String(text.prefix(80)), rect: r, help: "shape on the canvas")
             } else {
