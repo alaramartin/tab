@@ -3,6 +3,8 @@
 //   text     Apple Vision OCR. Each line becomes a pseudo-element with a real screen rect (path "ocr:<text>").
 //   objects  icon-sized shapes OCR didn't cover (Vision contours), named by the hub's small vision model through
 //            IconLabeler's cache (path "vis:<image hash>", so the same icon keeps its identity across sessions).
+//   shapes   larger things on a canvas (diagram boxes, images, game pieces): named by the text inside them, else by the
+//            same vision model (path "vis:<image hash>" too).
 // Prediction, ghosts and clicks treat both like AX elements. Needs Screen Recording permission; without it, nothing
 // happens.
 import AppKit
@@ -79,6 +81,7 @@ enum VisionSensor {
         var counts: [String: Int] = [:]
         var newRects: [String: Rect] = [:]
         var textRects: [Rect] = []
+        var lines: [(text: String, rect: Rect)] = []
         func add(_ base: String, role: String, label: String, rect r: Rect, help: String? = nil) {
             let n = counts[base, default: 0]
             counts[base] = n + 1
@@ -105,15 +108,33 @@ enum VisionSensor {
             let words = text.split(separator: " ").count
             let role = words <= 4 && text.count <= 32 ? "button" : "text"
             add("ocr:" + String(text.prefix(60)), role: role, label: String(text.prefix(80)), rect: r)
+            lines.append((text, r))
         }
         let t2 = CFAbsoluteTimeGetCurrent()
         var reqs: [IconLabeler.Request] = []
         let scale = Double(image.width) / frame.w
-        for r in objects(in: image, frame: frame, avoid: textRects).prefix(max(0, maxEls - out.count)) {
-            let px = CGRect(x: (r.x - frame.x) * scale, y: (r.y - frame.y) * scale, width: r.w * scale, height: r.h * scale).integral
-            guard let crop = image.cropping(to: px), let (hash, label, request) = IconLabeler.lookup(crop) else { continue }
+        let found = objects(in: image, frame: frame, avoid: textRects)
+        func crop(_ r: Rect) -> CGImage? {
+            image.cropping(to: CGRect(x: (r.x - frame.x) * scale, y: (r.y - frame.y) * scale, width: r.w * scale, height: r.h * scale).integral)
+        }
+        for r in found.icons.prefix(max(0, maxEls - out.count)) {
+            guard let c = crop(r), let (hash, label, request) = IconLabeler.lookup(c) else { continue }
             if let request { reqs.append(request) }
             add("vis:" + hash, role: "button", label: label ?? "", rect: r, help: label == nil ? nil : "icon, named by vision")
+        }
+        // A shape with text in it is named by that text ("Login service"); one without is named like an icon.
+        for r in found.shapes.prefix(max(0, maxEls - out.count)) {
+            guard let c = crop(r) else { continue }
+            let inside = lines.filter { l in l.rect.x >= r.x - 2 && l.rect.y >= r.y - 2 && l.rect.x + l.rect.w <= r.x + r.w + 2 && l.rect.y + l.rect.h <= r.y + r.h + 2 }
+            let text = inside.map(\.text).joined(separator: " ")
+            if !text.isEmpty {
+                guard let hash = IconLabeler.dHash(c) else { continue }
+                add("vis:" + hash, role: "button", label: String(text.prefix(80)), rect: r, help: "shape on the canvas")
+            } else {
+                guard let (hash, label, request) = IconLabeler.lookup(c) else { continue }
+                if let request { reqs.append(request) }
+                add("vis:" + hash, role: "button", label: label ?? "", rect: r, help: label == nil ? "shape on the canvas" : "shape on the canvas, named by vision")
+            }
         }
         let objectsMs = (CFAbsoluteTimeGetCurrent() - t2) * 1000
         lock.lock()
@@ -123,20 +144,27 @@ enum VisionSensor {
         return (out, reqs, (textMs, objectsMs))
     }
 
-    /// Icon-sized shapes (12–96 pt, not text): top-level contours, the parts of one icon merged, in screen points.
-    static func objects(in image: CGImage, frame: Rect, avoid: [Rect]) -> [Rect] {
+    /// Top-level contours in screen points, sorted into icons (12–96 pt, not text; the parts of one icon merged) and
+    /// shapes (bigger, at least 24 pt across, at most 60% of the window each way, not thin lines; text inside is fine).
+    static func objects(in image: CGImage, frame: Rect, avoid: [Rect]) -> (icons: [Rect], shapes: [Rect]) {
         let req = VNDetectContoursRequest()
         req.maximumImageDimension = 512 // ~50 ms on an M2 for a full window
         req.detectsDarkOnLight = luminance(image) > 0.5 // light window: dark shapes; dark mode: light ones
-        guard (try? VNImageRequestHandler(cgImage: image).perform([req])) != nil, let c = req.results?.first else { return [] }
+        guard (try? VNImageRequestHandler(cgImage: image).perform([req])) != nil, let c = req.results?.first else { return ([], []) }
         func overlapsText(_ r: Rect) -> Bool {
             avoid.contains { t in r.x < t.x + t.w + 2 && t.x - 2 < r.x + r.w && r.y < t.y + t.h + 2 && t.y - 2 < r.y + r.h }
         }
         var boxes: [Rect] = []
+        var shapes: [Rect] = []
         for k in c.topLevelContours.prefix(1500) {
             let b = k.normalizedPath.boundingBox // normalised, bottom-left origin
             let r = Rect(x: frame.x + b.minX * frame.w, y: frame.y + (1 - b.maxY) * frame.h, w: b.width * frame.w, h: b.height * frame.h)
-            if r.w < 2 || r.h < 2 || r.w > 96 || r.h > 96 || overlapsText(r) { continue }
+            if r.w < 2 || r.h < 2 { continue }
+            if r.w > 96 || r.h > 96 {
+                if min(r.w, r.h) >= 24, r.w <= frame.w * 0.6, r.h <= frame.h * 0.6, max(r.w / r.h, r.h / r.w) <= 6 { shapes.append(r) }
+                continue
+            }
+            if overlapsText(r) { continue }
             boxes.append(r)
         }
         // Parts of one icon (a magnifier's glass and handle) touch or nearly touch: merge boxes within 3 pt.
@@ -156,10 +184,13 @@ enum VisionSensor {
                 }
             }
         }
-        return boxes
+        let icons = boxes
             .filter { $0.w >= 12 && $0.h >= 12 && $0.w <= 96 && $0.h <= 96 && max($0.w / $0.h, $0.h / $0.w) <= 3 && !overlapsText($0) }
             .sorted { ($0.y, $0.x) < ($1.y, $1.x) }
             .prefix(24).map { $0 }
+        // Biggest first when there are many (the board before its scraps), then in reading order.
+        let big = shapes.sorted { $0.w * $0.h > $1.w * $1.h }.prefix(16).sorted { ($0.y, $0.x) < ($1.y, $1.x) }
+        return (icons, Array(big))
     }
 
     /// Mean brightness, 0…1.
