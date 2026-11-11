@@ -223,14 +223,27 @@ enum AXSensor {
 
     /// An item of a repeated structure: the list (or table) it's in, and which item.
     struct ListPos { let key: String; let index: Int }
-    struct Node { let el: AXUIElement; let info: AXInfo; let path: String; let section: String?; let depth: Int; var cell: GridRef? = nil; var item: ListPos? = nil }
+    struct Node {
+        let el: AXUIElement; let info: AXInfo; let path: String; let section: String?; let depth: Int; var cell: GridRef? = nil; var item: ListPos? = nil
+        var grid: GridRef? = nil // its own row/column, for cells and rows
+        var options: [String]? = nil // popup and combo box choices
+    }
+
+    /// What a walk reads from one element: its attributes, plus a cell's or row's grid position and a popup's options.
+    struct Fetched { let info: AXInfo; let grid: GridRef?; let options: [String]? }
+
+    static func fetch(_ el: AXUIElement) -> Fetched {
+        let i = AXInfo(el)
+        return Fetched(info: i, grid: i.role == "AXCell" || i.role == "AXRow" ? grid(el, i) : nil, options: options(i))
+    }
     static let listRoles: Set<String> = ["AXTable", "AXOutline", "AXList", "AXGrid"]
 
     /// Walk the focused window breadth-first (top of the window first), pruning subtrees that lie outside it.
     /// `visit` returns false to stop. Paths are computed the same way for snapshots and for exec lookups.
-    static func walk(window w: AXUIElement, limits: Limits = Limits(), _ visit: (Node) -> Bool) {
+    /// `fetch` reads an element; an AXTreeCache answers from the last walk for every subtree that didn't change.
+    static func walk(window w: AXUIElement, limits: Limits = Limits(), fetch: (AXUIElement) -> Fetched = AXSensor.fetch, _ visit: (Node) -> Bool) {
         AXUIElementSetMessagingTimeout(w, 0.25)
-        let winInfo = AXInfo(w)
+        let winInfo = fetch(w).info
         let bounds = winInfo.frame
         var counts: [String: Int] = [:]
         // Attributes are fetched when a node is dequeued, so nodes past the budget cost nothing.
@@ -247,21 +260,22 @@ enum AXSensor {
             let (el, section, depth, inCell, inItem, parentList, childIndex) = inPage ? prio[pHead] : queue[head]
             if inPage { pHead += 1 } else { head += 1 }
             visited += 1
-            let info = AXInfo(el)
+            let got = fetch(el)
+            let info = got.info
             if let f = info.frame, let b = bounds, f.w > 0, f.h > 0, !intersects(f, b) { continue } // offscreen subtree
             let base = pathBase(info)
             let n = counts[base, default: 0]
             counts[base] = n + 1
             let path = n == 0 ? base : "\(base)#\(n)"
             // Controls inside a table cell (an editable field, a checkbox) take the cell's row and column.
-            let cell = info.role == "AXCell" ? grid(el, info) : inCell
+            let cell = info.role == "AXCell" ? got.grid : inCell
             // A direct child of a list or table starts an item (rows by their row index); everything inside belongs to it.
             var item = inItem
             if let key = parentList, info.role != "AXColumn", !(info.role == "AXGroup" && info.subrole == "AXTableHeaderView") {
-                let row: Int? = info.role == "AXRow" ? grid(el, info)?.row : nil
+                let row: Int? = info.role == "AXRow" ? got.grid?.row : nil
                 item = ListPos(key: key, index: row ?? childIndex)
             }
-            if !visit(Node(el: el, info: info, path: path, section: section, depth: depth, cell: cell, item: item)) { return }
+            if !visit(Node(el: el, info: info, path: path, section: section, depth: depth, cell: cell, item: item, grid: got.grid, options: got.options)) { return }
             let childList: String? = listRoles.contains(info.role) ? path : nil
             // A labelled container, or a heading, names the section its descendants belong to.
             var childSection = section
@@ -356,7 +370,7 @@ enum AXSensor {
         var checked: Bool? = nil
         if role == "checkbox" || role == "tab" { checked = (i.value as? NSNumber).map { $0.intValue != 0 } }
         if i.role == "AXButton", i.subrole == "AXToggle" { checked = (i.value as? NSNumber).map { $0.intValue != 0 }; role = "checkbox" }
-        var e = El(id: n.path, role: role, label: String(label.prefix(80)), value: value, options: options(i), checked: checked,
+        var e = El(id: n.path, role: role, label: String(label.prefix(80)), value: value, options: n.options, checked: checked,
                    rect: f, enabled: i.enabled, path: n.path, list: nil)
         e.section = n.section
         e.axId = i.identifier.isEmpty ? nil : i.identifier
@@ -364,7 +378,7 @@ enum AXSensor {
         e.help = i.help.isEmpty ? nil : String(i.help.prefix(120))
         e.focused = i.focused ? true : nil
         e.secure = secure ? true : nil
-        if role == "cell" || role == "row" { e.grid = grid(n.el, i) } else if let c = n.cell { e.grid = c }
+        if role == "cell" || role == "row" { e.grid = n.grid } else if let c = n.cell { e.grid = c }
         // Which field of the item this is (same across items): role and column.
         if let it = n.item { e.list = ListRef(key: it.key, index: it.index, field: "\(role)@\(e.grid?.col.map { String($0) } ?? "-")") }
         if i.focused, role == "textfield" || role == "textarea" { e.caret = caret(n.el) }
@@ -377,12 +391,14 @@ enum AXSensor {
     }
 
     /// The snapshot plus each element's AXUIElement (same order), so later changes to one element can be patched in.
-    static func stateAndRefs(pid: pid_t, bundleId: String, seq: Int, limits: Limits = Limits()) -> (ScreenState, [AXUIElement])? {
+    static func stateAndRefs(pid: pid_t, bundleId: String, seq: Int, limits: Limits = Limits(), cache: AXTreeCache? = nil) -> (ScreenState, [AXUIElement])? {
         guard let w = AX.focusedWindow(pid: pid) else { return nil }
+        cache?.begin(window: w)
+        defer { cache?.end() }
         var controls: [(El, AXUIElement)] = [], texts: [(El, AXUIElement)] = []
         var url: String?
         var nodes = 0
-        walk(window: w, limits: limits) { n in
+        walk(window: w, limits: limits, fetch: cache?.fetch ?? AXSensor.fetch) { n in
             nodes += 1
             if n.info.role == "AXWebArea", url == nil, let u: URL = AX.attr(n.el, "AXURL") { url = u.absoluteString }
             if let e = makeEl(n, includeText: texts.count < limits.maxText) {
@@ -455,7 +471,7 @@ final class AXPoller {
         if timer == nil {
             let tm = DispatchSource.makeTimerSource(queue: queue)
             tm.schedule(deadline: .now() + 1, repeating: .milliseconds(1000), leeway: .milliseconds(100))
-            tm.setEventHandler { [weak self] in self?.tick() } // fallback for apps that post few notifications
+            tm.setEventHandler { [weak self] in self?.needFull = true; self?.tick() } // fallback for apps that post few notifications
             tm.resume()
             timer = tm
         }
@@ -465,7 +481,7 @@ final class AXPoller {
     private func attach(_ t: (pid_t, String)?) {
         if let o = observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(o), .defaultMode) }
         observer = nil
-        queue.async { self.target = t.map { (pid: $0.0, bundleId: $0.1) }; self.lastSig = nil; self.lastState = nil; self.lastRefs = [] }
+        queue.async { self.target = t.map { (pid: $0.0, bundleId: $0.1) }; self.lastSig = nil; self.lastState = nil; self.lastRefs = []; self.needFull = true; self.tree.reset() }
         guard let (pid, bid) = t, AXIsProcessTrusted() else { return }
         queue.async { AXSensor.enableTree(pid: pid, bundleId: bid) }
         var obs: AXObserver?
@@ -485,18 +501,42 @@ final class AXPoller {
     private var lastTick: CFAbsoluteTime = 0
     private var lastState: ScreenState?
     private var lastRefs: [AXUIElement] = []
+    /// The last walk's elements. A change inside one subtree drops just that subtree, and the next walk reads only it
+    /// from the app (the rest comes from here, with the same paths a full walk would give).
+    let tree = AXTreeCache()
+    private var dirty: [AXUIElement] = []
+    private var needFull = true
+    /// Changes that name the container they happened in (a list's selection, a group's layout, focus). Anything else,
+    /// such as a window opening or an element destroyed, walks the whole window.
+    private static let subtreeNotes: Set<String> = [kAXLayoutChangedNotification, kAXSelectedChildrenChangedNotification,
+                                                    kAXSelectedRowsChangedNotification, kAXFocusedUIElementChangedNotification,
+                                                    kAXTitleChangedNotification]
 
     /// A value change names its element (typing, a checkbox, a slider, a popup). If the last snapshot has it, rebuild
     /// just that element the way a full walk would (~1 ms) and send the patched snapshot right away; a full walk
     /// follows 300 ms later for anything structural (a suggestion list appearing, a radio group's other buttons).
     func changed(_ el: AXUIElement, _ note: String) {
-        guard note == kAXValueChangedNotification || note == kAXSelectedTextChangedNotification else { return changed() }
+        guard note == kAXValueChangedNotification || note == kAXSelectedTextChangedNotification else {
+            let subtree = AXPoller.subtreeNotes.contains(note)
+            let focus = note == kAXFocusedUIElementChangedNotification
+            queue.async {
+                if subtree, self.tree.contains(el) {
+                    if focus { self.tree.invalidateFocused() } // the element that lost focus says so too
+                    self.dirty.append(el)
+                } else {
+                    self.needFull = true
+                }
+            }
+            return changed()
+        }
         queue.async {
             guard var st = self.lastState, let i = self.lastRefs.firstIndex(where: { CFEqual($0, el) }), i < st.elements.count else { return self.changed() }
             let old = st.elements[i]
             // Its place in the tree stays what the last walk found: path, section, table cell, list item.
-            let node = AXSensor.Node(el: el, info: AXInfo(el), path: old.path ?? old.id, section: old.section, depth: 0, cell: old.grid,
-                                     item: old.list.map { AXSensor.ListPos(key: $0.key, index: $0.index) })
+            let got = AXSensor.fetch(el)
+            let node = AXSensor.Node(el: el, info: got.info, path: old.path ?? old.id, section: old.section, depth: 0, cell: old.grid,
+                                     item: old.list.map { AXSensor.ListPos(key: $0.key, index: $0.index) }, grid: got.grid, options: got.options)
+            self.tree.invalidate(el) // the next walk reads it again
             guard var e = AXSensor.makeEl(node, includeText: true), e.role == old.role else { return self.changed() }
             e.id = old.id
             e.list = old.list
@@ -515,7 +555,7 @@ final class AXPoller {
     private var fullPending: DispatchWorkItem?
     private func fullSoon() {
         fullPending?.cancel()
-        let w = DispatchWorkItem { [weak self] in self?.lastTick = CFAbsoluteTimeGetCurrent(); self?.tick() }
+        let w = DispatchWorkItem { [weak self] in self?.lastTick = CFAbsoluteTimeGetCurrent(); self?.needFull = true; self?.tick() }
         fullPending = w
         queue.asyncAfter(deadline: .now() + 0.3, execute: w)
     }
@@ -533,7 +573,7 @@ final class AXPoller {
     }
 
     /// Force the next snapshot out even if unchanged (after an exec, so the hub sees the new screen).
-    func invalidate() { queue.async { self.lastSig = nil; self.changed() } }
+    func invalidate() { queue.async { self.lastSig = nil; self.needFull = true; self.changed() } }
 
     private var lastOCR: (pid: pid_t, at: CFAbsoluteTime, els: [El])?
     private var ocrRunning = false
@@ -543,7 +583,16 @@ final class AXPoller {
         guard let target, AXIsProcessTrusted(), !TabConfig.denied(target.bundleId) else { return }
         seq += 1
         let t0 = CFAbsoluteTimeGetCurrent()
-        guard let (snap, refs) = AXSensor.stateAndRefs(pid: target.pid, bundleId: target.bundleId, seq: seq) else { return }
+        // Only subtrees changed since the last walk: read those again and the rest from the cache.
+        if needFull { tree.reset() } else { for el in dirty { tree.invalidate(el) } }
+        let subtree = !needFull && !dirty.isEmpty
+        needFull = false
+        dirty = []
+        let before = tree.fetched
+        guard let (snap, refs) = AXSensor.stateAndRefs(pid: target.pid, bundleId: target.bundleId, seq: seq, cache: tree) else { return }
+        if subtree, debugEnabled {
+            log(String(format: "ax: subtree walk, %d elements read again, %d from cache, %.1f ms", tree.fetched - before, tree.size - (tree.fetched - before), (CFAbsoluteTimeGetCurrent() - t0) * 1000))
+        }
         var st = snap
         lastRefs = refs
         // Icon-only controls get names from the vision model (cached by image hash; unknown ones go to the hub).
@@ -588,4 +637,54 @@ final class AXPoller {
     /// Run `body` on the AX queue (AX calls wait on the other app; never on the tap's run loop).
     func async(_ body: @escaping () -> Void) { queue.async(execute: body) }
     func after(_ seconds: Double, _ body: @escaping () -> Void) { queue.asyncAfter(deadline: .now() + seconds, execute: body) }
+}
+
+/// The attributes each element had on the last walk, keyed by element. `invalidate` drops a subtree; the next walk
+/// reads only what is missing from the app. A walk keeps just the elements it visited.
+final class AXTreeCache {
+    struct Key: Hashable {
+        let el: AXUIElement
+        func hash(into h: inout Hasher) { h.combine(CFHash(el)) }
+        static func == (a: Key, b: Key) -> Bool { CFEqual(a.el, b.el) }
+    }
+    private var map: [Key: AXSensor.Fetched] = [:]
+    private var next: [Key: AXSensor.Fetched] = [:]
+    private var window: AXUIElement?
+    /// Elements read from the app since this cache was made (the rest came from the cache).
+    private(set) var fetched = 0
+
+    var size: Int { map.count }
+
+    func contains(_ el: AXUIElement) -> Bool { map[Key(el: el)] != nil }
+
+    /// A walk of `w` starts. A different window than last time starts empty.
+    func begin(window w: AXUIElement) {
+        if let window, !CFEqual(window, w) { map = [:] }
+        window = w
+        next = [:]
+    }
+
+    func end() { map = next; next = [:] }
+
+    func fetch(_ el: AXUIElement) -> AXSensor.Fetched {
+        let k = Key(el: el)
+        if let f = map[k] { next[k] = f; return f }
+        let f = AXSensor.fetch(el)
+        fetched += 1
+        next[k] = f
+        return f
+    }
+
+    /// Forget this element and everything under it.
+    func invalidate(_ el: AXUIElement) {
+        guard let f = map.removeValue(forKey: Key(el: el)) else { return }
+        for c in f.info.children { invalidate(c) }
+    }
+
+    /// Forget the element that had focus (focus moved: it changed too).
+    func invalidateFocused() {
+        for (k, f) in map where f.info.focused { invalidate(k.el) }
+    }
+
+    func reset() { map = [:]; window = nil }
 }

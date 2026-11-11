@@ -554,6 +554,7 @@ func renderHUD(to out: String) {
 
 if args.contains("--tap-selftest") { runTapSelftest() }
 if args.contains("--vision-selftest") { runVisionSelftest() }
+if args.contains("--subtree-selftest") { runSubtreeSelftest() }
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

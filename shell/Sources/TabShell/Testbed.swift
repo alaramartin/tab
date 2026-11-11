@@ -11,7 +11,7 @@ final class Testbed: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     let table = NSTableView()
     let status = NSTextField(labelWithString: "Nothing submitted yet")
 
-    override init() {
+    init(offscreen: Bool = false) {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 560), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
         window.title = "Tab Testbed"
@@ -95,6 +95,12 @@ final class Testbed: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         main.addItem(editItem)
         NSApp.mainMenu = main
 
+        if offscreen {
+            // Selftests: on no screen and never activated, so nothing on the user's desktop changes.
+            window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+            window.orderFront(nil)
+            return
+        }
         window.center()
         window.makeKeyAndOrderFront(nil)
         if CommandLine.arguments.contains("--signup") { openSignup() }

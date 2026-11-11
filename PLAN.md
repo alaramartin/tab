@@ -13,7 +13,6 @@ Items marked *(needs you)* need a decision or the Mac to yourself. The rest a se
 1. **Notice payment requests in any app.** *(needs you: pick the approach)* The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
 2. **Design the HUD.** *(needs you)* It's a placeholder: status, last payment, and an expandable Tab did / You did (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
 3. **Run the end-to-end tests.** *(needs you away from the Mac: they move the mouse and type)* `npm run e2e:chores` (teach once, repeat, then do the remaining) is written but has never run. Patching a changed checkbox, slider or popup in place (`AXSensor.changed`) has never run on a live window; `npm run e2e` covers it. `npm run e2e` last failed because the Mac was in use; `npm run e2e:canvas` passes. First rebuild and relaunch TabShell (`shell/scripts/build-shell.sh --run`), and leave port 7800 free (no hub running).
-5. **Re-walk only what changed.** A changed value patches its one element (`AXPoller.changed` in `AXSensor.swift`). A structural change (a list appears, a dialog opens) still walks the whole window (`AXSensor.walk`), and big windows hit the 80 ms budget. Walking just the subtree means numbering paths within it, since paths are numbered across the whole window today.
 6. **Canvas content beyond icons.** Vision finds text and icon-sized shapes (`VisionSensor.objects`, 12–96 pt). Larger things on a canvas (diagram boxes, images, game pieces) aren't elements yet.
 7. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
 9. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
@@ -150,6 +149,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 12. **Nov 11.**
     - Provenance knows facts and rewrites: a value typed before into a different kind of field is a `fact`, and a copied value or fact can carry a transform (case, digits only, a date in another format; `memory/transform.ts`). A habit fed by the same fact fills that fact's newest value, rewritten the same way.
     - Search Memory… in the menu bar: a panel that searches episode summaries by meaning and by their words (words alone without the embedding model), via `memory_search` / `memory_results`. Clicking a result opens its app. `TabShell --render-memory-search out.png` draws it offscreen.
+    - Subtree re-walks: each walk caches every element's attributes (`AXTreeCache`). A change that names its container (layout, selection, focus, title) drops only that subtree, and the next walk reads just it from the app and the rest from the cache, so paths stay numbered across the whole window exactly as a full walk numbers them. Windows opening, elements destroyed and the 1 s fallback poll still walk everything. `TabShell --subtree-selftest` checks it on an offscreen testbed: an unchanged walk reads nothing, and after a table edit the subtree walk equals a full one.
 
 ### How we worked
 
@@ -182,7 +182,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
   Overlay, HUD    the ghost                 payments (x402)
 ```
 
-- **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model. A window with little Accessibility is read with on-device OCR, and the icons in it are found and named the same way.
+- **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. A changed value patches its one element, and a change inside one container re-reads only that container. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model. A window with little Accessibility is read with on-device OCR, and the icons in it are found and named the same way.
 - **Memory** (`ActionObserver.swift`, `brain/src/memory/`): every click, typing burst and shortcut is saved with the element it hit and the screens before and after it.
   - Screens are stored once each, and a changed screen is stored as a small patch on the one before.
   - A typed value also records where it came from (copied from a screen, the next in a sequence, typed before, a known fact from another field) and how it was rewritten (case, digits only, a date format), so a step can be replayed with new values.
@@ -215,4 +215,4 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 
 ### Shell tools
 
-`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions, and `--render-hud` and `--render-memory-search <out.png>` draw those windows offscreen.
+`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions, `--subtree-selftest` runs offscreen with the Accessibility grant, and `--render-hud` and `--render-memory-search <out.png>` draw those windows offscreen.
