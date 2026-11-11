@@ -1,6 +1,7 @@
 // The decider behind the hub's predict loop: everything runs on this Mac (src/predict/decider.ts).
 import type { Action, El, ScreenState } from "../../protocol/types.ts";
 import type { HistEntry } from "./history.ts";
+import type { FactSource } from "./memory/provenance.ts";
 import type { Memory } from "./memory/store.ts";
 
 export interface ModelInput {
@@ -23,6 +24,8 @@ export interface Decider {
     rebuild?(memory: Memory | null): void;
     /** A screen arrived: prepare for it in the background (embed its fields), so predicting on it is fast. */
     see?(s: ScreenState): void;
+    /** Values typed before into named fields, for working out where a typed value came from. */
+    readonly facts?: FactSource;
 }
 
 export async function makeDecider(opts: { memory?: Memory | null } = {}): Promise<Decider> {

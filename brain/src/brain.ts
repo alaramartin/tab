@@ -204,7 +204,7 @@ export class Brain {
     private onUserEvent(e: UserEvent): void {
         if (this.running || Date.now() < this.echoUntil) return; // our own steps, reported back
         const prov = e.kind === "type" && e.value && !e.partial && !e.target?.secure
-            ? deriveProvenance(e.value, e.target, e.ts, this.store.recent(e.ts), this.history.entries.map(toPast))
+            ? deriveProvenance(e.value, e.target, e.ts, this.store.recent(e.ts), this.history.entries.map(toPast), this.o.decider?.facts)
             : undefined;
         this.remember(() =>
             this.o.memory?.addStep({ ts: e.ts, app: e.app, window: e.window, url: e.url, op: e.kind, by: "user", target: e.target, value: e.value, before: e.before, partial: e.partial, prov }),

@@ -13,7 +13,6 @@ Items marked *(needs you)* need a decision or the Mac to yourself. The rest a se
 1. **Notice payment requests in any app.** *(needs you: pick the approach)* The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
 2. **Design the HUD.** *(needs you)* It's a placeholder: status, last payment, and an expandable Tab did / You did (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
 3. **Run the end-to-end tests.** *(needs you away from the Mac: they move the mouse and type)* `npm run e2e:chores` (teach once, repeat, then do the remaining) is written but has never run. Patching a changed checkbox, slider or popup in place (`AXSensor.changed`) has never run on a live window; `npm run e2e` covers it. `npm run e2e` last failed because the Mac was in use; `npm run e2e:canvas` passes. First rebuild and relaunch TabShell (`shell/scripts/build-shell.sh --run`), and leave port 7800 free (no hub running).
-4. **Values from facts and transforms.** Each typed value records whether it was copied from a screen, continued a sequence, repeated an earlier one, or was new (`brain/src/memory/provenance.ts`). A value from a known fact or a transform (case, a date format) is still recorded as new.
 5. **Re-walk only what changed.** A changed value patches its one element (`AXPoller.changed` in `AXSensor.swift`). A structural change (a list appears, a dialog opens) still walks the whole window (`AXSensor.walk`), and big windows hit the 80 ms budget. Walking just the subtree means numbering paths within it, since paths are numbered across the whole window today.
 6. **Canvas content beyond icons.** Vision finds text and icon-sized shapes (`VisionSensor.objects`, 12–96 pt). Larger things on a canvas (diagram boxes, images, game pieces) aren't elements yet.
 7. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
@@ -149,6 +148,9 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
     - Chores test windows (`--testbed --chores`) and `npm run e2e:chores`.
     - A changed checkbox, slider or popup is patched in place like typing, so its screen goes out without a full walk.
 
+12. **Nov 11.**
+    - Provenance knows facts and rewrites: a value typed before into a different kind of field is a `fact`, and a copied value or fact can carry a transform (case, digits only, a date in another format; `memory/transform.ts`). A habit fed by the same fact fills that fact's newest value, rewritten the same way.
+
 ### How we worked
 
 - The plan was written first and kept as a progress log.
@@ -183,7 +185,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 - **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model. A window with little Accessibility is read with on-device OCR, and the icons in it are found and named the same way.
 - **Memory** (`ActionObserver.swift`, `brain/src/memory/`): every click, typing burst and shortcut is saved with the element it hit and the screens before and after it.
   - Screens are stored once each, and a changed screen is stored as a small patch on the one before.
-  - A typed value also records where it came from (copied from a screen, the next in a sequence, typed before), so a step can be replayed with new values.
+  - A typed value also records where it came from (copied from a screen, the next in a sequence, typed before, a known fact from another field) and how it was rewritten (case, digits only, a date format), so a step can be replayed with new values.
   - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
   - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search.
 - **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. They include what you did after a similar step in other apps. The local model only runs once you pause, and stops as soon as you do something.

@@ -9,7 +9,7 @@
 // A predicted template is made concrete by finding the element with that signature on the current screen.
 import type { Action, El } from "../../../protocol/types.ts";
 import type { Candidate, PastStep, PredictContext, Predictor } from "../predict/types.ts";
-import { resolveCopied, type Provenance } from "./provenance.ts";
+import { resolveCopied, resolveFact, type FactSource, type Provenance } from "./provenance.ts";
 import { elSig, norm, screenKind } from "./sig.ts";
 
 const HALF_LIFE_MS = 14 * 86_400_000;
@@ -21,7 +21,7 @@ interface Next {
     t: number; // last update
     tpl: Tpl;
     values: Map<string, number>; // type/key: values seen, with counts
-    copied: Map<string, { n: number; prov: Extract<Provenance, { kind: "copied" }> }>; // type: where varying values were copied from
+    copied: Map<string, { n: number; prov: Extract<Provenance, { kind: "copied" | "fact" }> }>; // type: where varying values came from (a field on screen, a known fact)
     typed: number; // type steps seen
 }
 
@@ -62,6 +62,8 @@ export class HabitModel implements Predictor {
     private table = new Map<string, Map<string, Next>>(); // context key → next template key → stats
     private last: { tpl: Tpl; ts: number }[] = [];
 
+    constructor(private facts?: FactSource) {}
+
     private ctxKeys(prev: Tpl[], kind: string): string[] {
         const k: string[] = [];
         if (prev.length >= 2) k.push(`2|${prev[prev.length - 2].key}|${prev[prev.length - 1].key}`);
@@ -84,9 +86,12 @@ export class HabitModel implements Predictor {
             if (step.value !== undefined && (step.op === "type" || step.op === "key")) n.values.set(step.value, (n.values.get(step.value) ?? 0) + 1);
             if (step.op === "type") {
                 n.typed++;
-                if (step.prov?.kind === "copied" && step.prov.from.attr === "value" && step.prov.from.label) {
-                    const k = JSON.stringify([step.prov.from.app, step.prov.from.role, norm(step.prov.from.label, false)]);
-                    const c = n.copied.get(k) ?? { n: 0, prov: step.prov };
+                const p = step.prov;
+                const k =
+                    p?.kind === "copied" && p.from.attr === "value" && p.from.label ? JSON.stringify([p.from.app, p.from.role, norm(p.from.label, false), p.transform ?? ""]) :
+                    p?.kind === "fact" ? JSON.stringify(["fact", norm(p.label, false), p.transform ?? ""]) : null;
+                if (k && (p?.kind === "copied" || p?.kind === "fact")) {
+                    const c = n.copied.get(k) ?? { n: 0, prov: p };
                     c.n++;
                     n.copied.set(k, c);
                 }
@@ -130,13 +135,14 @@ export class HabitModel implements Predictor {
         }
         let value: string | undefined;
         if (n.tpl.op === "type") {
-            // A value the user always types here; else, if it's always copied from the same field, that field's value now.
+            // A value the user always types here; else, if it always comes from the same field or fact, its value now.
             const [top, cnt] = [...n.values.entries()].sort((x, y) => y[1] - x[1])[0] ?? [];
             const all = [...n.values.values()].reduce((x, y) => x + y, 0);
             if (top !== undefined && cnt! / all >= 0.8) value = top;
             else {
                 const best = [...n.copied.values()].sort((x, y) => y.n - x.n)[0];
-                if (best && best.n / Math.max(1, n.typed) >= 0.8) value = resolveCopied(best.prov, [ctx.active, ...ctx.recent]);
+                if (best && best.n / Math.max(1, n.typed) >= 0.8)
+                    value = best.prov.kind === "copied" ? resolveCopied(best.prov, [ctx.active, ...ctx.recent]) : resolveFact(best.prov, this.facts);
             }
             if (value === undefined || (el?.value && norm(el.value) === norm(value))) return null;
         } else if (n.tpl.op === "key") value = n.tpl.key2;

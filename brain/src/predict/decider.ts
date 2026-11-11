@@ -62,8 +62,8 @@ export class LocalDecider implements Decider {
 
     /** Learn everything memory has seen, in order (at start, and after a forget). */
     rebuild(memory: Memory | null): void {
-        this.habits = new HabitModel();
         this.facts = new FactIndex(this.embedder);
+        this.habits = new HabitModel(this.facts);
         this.similar = new SimilarMoments(this.embedder);
         const opts = { memory };
         if (opts.memory) {

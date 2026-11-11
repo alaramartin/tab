@@ -12,6 +12,7 @@ import type { Action, El, ScreenState } from "../../../protocol/types.ts";
 import type { Candidate, PastStep, PredictContext, Predictor } from "../predict/types.ts";
 import { describeEl, labelFor } from "../predict/generic.ts";
 import { cosine, type Embedder, type Vec } from "./embed.ts";
+import type { FactSource } from "./provenance.ts";
 import { norm, screenKind } from "./sig.ts";
 
 const FIELD = new Set(["textfield", "textarea"]);
@@ -80,7 +81,7 @@ function whereOf(s: { app: string; url?: string; window?: string }): string {
     return screenKind(s).split("|").slice(1).join(" ") || s.app;
 }
 
-export class FactIndex implements Predictor {
+export class FactIndex implements Predictor, FactSource {
     readonly tier = "fact" as const;
     private facts: Fact[] = [];
     private rejected = new Set<string>(); // "field name\nvalue" the user dismissed
@@ -94,6 +95,23 @@ export class FactIndex implements Predictor {
 
     get size(): number {
         return this.facts.length;
+    }
+
+    *known(): Iterable<{ label: string; value: string }> {
+        const seen = new Set<string>();
+        for (let i = this.facts.length - 1; i >= 0; i--) {
+            const f = this.facts[i];
+            const k = `${f.labelNorm}\n${f.value}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            yield { label: f.label, value: f.value };
+        }
+    }
+
+    latest(label: string): string | undefined {
+        const ln = norm(label, false);
+        for (let i = this.facts.length - 1; i >= 0; i--) if (this.facts[i].labelNorm === ln) return this.facts[i].value;
+        return undefined;
     }
 
     observe(step: PastStep): void {

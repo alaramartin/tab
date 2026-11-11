@@ -44,3 +44,58 @@ test("a habit whose value is always copied from the same field fills that field'
     const fill = c.find((x) => x.action.op === "type");
     assert.equal(fill?.action.value, "2077", "the order ID on screen now, not one typed before");
 });
+
+test("transforms: case, digits, dates", async () => {
+    const { findTransform, applyTransform } = await import("../src/memory/transform.ts");
+    assert.equal(findTransform("acme corp", "ACME CORP"), "upper");
+    assert.equal(findTransform("JANE DOE", "Jane Doe"), "title");
+    assert.equal(findTransform("(555) 123-4567", "5551234567"), "digits");
+    assert.equal(findTransform("2026-11-11", "11/11/2026"), "date:m/d/yyyy");
+    assert.equal(findTransform("Nov 3, 2026", "2026-11-03"), "date:yyyy-mm-dd");
+    assert.equal(findTransform("2026-03-04", "4/3/2026"), "date:d/m/yyyy");
+    assert.equal(findTransform("hello", "world"), undefined);
+    assert.equal(findTransform("12", "12"), undefined);
+    assert.equal(applyTransform("date:month d, yyyy", "2027-01-09"), "January 9, 2027");
+    assert.equal(applyTransform("digits", "+1 (415) 555-0100"), "14155550100");
+    assert.equal(applyTransform("date:yyyy-mm-dd", "not a date"), undefined);
+});
+
+test("copied with a transform: a date on screen typed in another format", () => {
+    const inv = screen("com.books", "Invoice", [el("desc:Due", "textfield", "Due date", { value: "2026-12-01" })]);
+    const p = deriveProvenance("12/1/2026", el("desc:Pay by", "textfield", "Pay by"), T + 1000, [inv], []);
+    assert.equal(p.kind, "copied");
+    assert.equal(p.kind === "copied" && p.transform, "date:m/d/yyyy");
+});
+
+const facts = (list: { label: string; value: string }[]) => ({
+    known: () => list,
+    latest: (label: string) => list.find((f) => f.label.toLowerCase() === label.toLowerCase())?.value,
+});
+
+test("fact: a value typed before into a different kind of field, as typed or rewritten", () => {
+    const f = facts([{ label: "Email", value: "jane@acme.com" }, { label: "Company", value: "Acme Corp" }]);
+    const contact = el("desc:Contact", "textfield", "Contact");
+    assert.deepEqual(deriveProvenance("jane@acme.com", contact, T, [], [], f), { kind: "fact", label: "Email" });
+    assert.deepEqual(deriveProvenance("ACME CORP", el("desc:Org", "textfield", "Organisation"), T, [], [], f), { kind: "fact", label: "Company", transform: "upper" });
+    // The same field again is "repeated", not a fact.
+    assert.equal(deriveProvenance("nobody@x.io", contact, T, [], [], f).kind, "literal");
+});
+
+test("a habit whose value is always a known fact, rewritten, fills that fact's newest value", () => {
+    const list: { label: string; value: string }[] = [];
+    const h = new HabitModel(facts(list));
+    const W = "Expense";
+    let t = T;
+    for (const co of ["Initech", "Hooli", "Umbrella"]) {
+        list.unshift({ label: "Company", value: co }); // typed into a Company field elsewhere
+        const prov = deriveProvenance(co.toUpperCase(), el("desc:Vendor", "textfield", "Vendor"), t, [], [], facts(list));
+        assert.equal(prov.kind, "fact");
+        h.observe({ ts: (t += 5000), app: "com.exp", window: W, op: "click", by: "user", target: el("desc:New", "button", "New") });
+        h.observe({ ts: (t += 5000), app: "com.exp", window: W, op: "type", by: "user", target: el("desc:Vendor", "textfield", "Vendor"), value: co.toUpperCase(), prov });
+    }
+    list.unshift({ label: "Company", value: "Globex" }); // the fact changed since
+    h.observe({ ts: (t += 5000), app: "com.exp", window: W, op: "click", by: "user", target: el("desc:New", "button", "New") });
+    const now = screen("com.exp", W, [el("desc:Vendor", "textfield", "Vendor")], t);
+    const fill = h.predict({ now: t + 500, active: now, recent: [], history: [] }).find((x) => x.action.op === "type");
+    assert.equal(fill?.action.value, "GLOBEX");
+});
