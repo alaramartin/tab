@@ -16,7 +16,6 @@ Items marked *(needs you)* need a decision or the Mac to yourself. The rest a se
 5. **Re-walk only what changed.** A changed value patches its one element (`AXPoller.changed` in `AXSensor.swift`). A structural change (a list appears, a dialog opens) still walks the whole window (`AXSensor.walk`), and big windows hit the 80 ms budget. Walking just the subtree means numbering paths within it, since paths are numbered across the whole window today.
 6. **Canvas content beyond icons.** Vision finds text and icon-sized shapes (`VisionSensor.objects`, 12–96 pt). Larger things on a canvas (diagram boxes, images, game pieces) aren't elements yet.
 7. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-8. **Search memory from the app.** Past tasks are searchable by meaning (`npm run memory -- search`, `searchEpisodes` in `brain/src/memory/episodes.ts`), but only from the command line. The menu bar (`main.swift`) is the obvious place.
 9. **Maybe: a few built-in cross-app offers.** For example, after booking something, offer to add it to Calendar. Only where learning from use isn't enough.
 
 ---
@@ -150,6 +149,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 
 12. **Nov 11.**
     - Provenance knows facts and rewrites: a value typed before into a different kind of field is a `fact`, and a copied value or fact can carry a transform (case, digits only, a date in another format; `memory/transform.ts`). A habit fed by the same fact fills that fact's newest value, rewritten the same way.
+    - Search Memory… in the menu bar: a panel that searches episode summaries by meaning and by their words (words alone without the embedding model), via `memory_search` / `memory_results`. Clicking a result opens its app. `TabShell --render-memory-search out.png` draws it offscreen.
 
 ### How we worked
 
@@ -187,7 +187,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
   - Screens are stored once each, and a changed screen is stored as a small patch on the one before.
   - A typed value also records where it came from (copied from a screen, the next in a sequence, typed before, a known fact from another field) and how it was rewritten (case, digits only, a date format), so a step can be replayed with new values.
   - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
-  - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search.
+  - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search from the menu bar (Search Memory…).
 - **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. They include what you did after a similar step in other apps. The local model only runs once you pause, and stops as soon as you do something.
 - **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
 
@@ -215,4 +215,4 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 
 ### Shell tools
 
-`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions.
+`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions, and `--render-hud` and `--render-memory-search <out.png>` draw those windows offscreen.

@@ -23,12 +23,27 @@ export async function summarizeEpisodes(mem: Memory, llm: LlamaServer, embedder:
     return n;
 }
 
-export async function searchEpisodes(mem: Memory, embedder: Embedder, query: string, k = 8) {
-    const [q] = await embedder.embed([`task: search result | query: ${query}`]);
+/**
+ * Past tasks by meaning, plus by the words in them: `sim` is the cosine of the embedded query and summary, with
+ * up to 0.5 more for the share of query words the summary contains. Without the embedding model, words alone.
+ */
+export async function searchEpisodes(mem: Memory, embedder: Embedder | null, query: string, k = 8) {
+    const words = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
+    if (!words.length) return [];
+    let q: Float32Array | undefined;
+    if (embedder?.available) {
+        try {
+            [q] = await embedder.embed([`task: search result | query: ${query}`]);
+        } catch {}
+    }
+    const share = (s: string) => words.filter((w) => s.toLowerCase().includes(w)).length / words.length;
     return mem
         .episodes(5000)
-        .filter((e) => e.vec)
-        .map((e) => ({ ...e, sim: cosine(q, e.vec!) }))
+        .map((e) => {
+            const kw = share(`${e.summary} ${e.app}`);
+            return { ...e, sim: (q && e.vec ? cosine(q, e.vec) : 0) + (q ? 0.5 : 1) * kw, kw };
+        })
+        .filter((e) => (q && e.vec ? e.sim >= 0.35 : e.kw > 0))
         .sort((a, b) => b.sim - a.sim)
         .slice(0, k);
 }

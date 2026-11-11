@@ -1,6 +1,6 @@
 // Hub logic: the predict loop, ghosts, the sequence runner, payments, counters.
 // Transport-free so the websocket server and tests drive it the same way.
-import type { Action, El, Ghost, HubToDetector, HubToShell, Rect, ScreenState, UserEvent } from "../../protocol/types.ts";
+import type { Action, El, Ghost, HubToDetector, HubToShell, MemoryHit, Rect, ScreenState, UserEvent } from "../../protocol/types.ts";
 import { countStep, newHud } from "./counters.ts";
 import { History, toTarget, type HistEntry } from "./history.ts";
 import type { Memory } from "./memory/store.ts";
@@ -36,6 +36,8 @@ export interface BrainOpts {
     sendShell(m: HubToShell): void;
     sendDetector?(m: HubToDetector): void;
     decider: Decider | null;
+    /** Search Memory in the menu bar: past tasks by meaning (memory/episodes.ts). */
+    searchMemory?(query: string): Promise<MemoryHit[]>;
     /** Tests: predict right away instead of debouncing and waiting for idle. */
     immediate?: boolean;
     /** Name icon-only controls from their pixels (the local vision model); omit to leave them unnamed. */
@@ -128,6 +130,13 @@ export class Brain {
                     console.log(`[memory] forgot ${n} steps since ${new Date(since).toLocaleTimeString()}`);
                 });
                 this.hide();
+                break;
+            }
+            case "memory_search": {
+                const query = String(m.query ?? "").slice(0, 200);
+                const reply = (results: MemoryHit[]) => this.o.sendShell({ type: "memory_results", query, results });
+                if (!this.o.searchMemory) reply([]);
+                else this.o.searchMemory(query).then(reply, (err) => (console.error("[memory] search:", (err as Error).message), reply([])));
                 break;
             }
             case "icon_request":

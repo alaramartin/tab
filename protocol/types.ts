@@ -118,6 +118,7 @@ export type ShellToHub =
     | { type: "icon_request"; items: { hash: string; png: string }[] } // crops of unlabeled icons (base64 PNG)
     | { type: "paused"; paused: boolean } // menu bar → Pause Tab
     | { type: "forget"; sinceMs: number } // menu bar → Forget the Last Hour
+    | { type: "memory_search"; query: string } // menu bar → Search Memory
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }
     | { type: "dismiss"; ghostId: string }
@@ -129,7 +130,16 @@ export type HubToShell =
     | { type: "ghost_hide" }
     | { type: "exec"; ghostId: string; action: Action }
     | { type: "hud"; hud: Hud }
-    | { type: "icon_labels"; items: { hash: string; label: string }[] }; // "" = no usable name
+    | { type: "icon_labels"; items: { hash: string; label: string }[] } // "" = no usable name
+    | { type: "memory_results"; query: string; results: MemoryHit[] };
+
+/** A past task found by Search Memory: its one-line summary, where and when. */
+export interface MemoryHit {
+    ts: number; // when it ended
+    app: string;
+    summary: string;
+    steps: number;
+}
 
 export interface ExecResult {
     type: "exec_result";

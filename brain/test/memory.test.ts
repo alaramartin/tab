@@ -146,3 +146,25 @@ test("consolidate: old screens go, kept deltas are re-keyed and still decode, fo
     assert.equal(steps[0].value, "Initech");
     assert.equal(steps[0].before_snap, null, "its screen is gone, the fact stays");
 });
+
+test("search memory without the embedding model matches the words of summaries", async () => {
+    const { searchEpisodes } = await import("../src/memory/episodes.ts");
+    const m = new Memory(":memory:");
+    m.addStep({ ts: T0, app: "com.apple.mail", op: "click", by: "user" });
+    m.addStep({ ts: T0 + 400_000, app: "com.pharmacy", op: "click", by: "user" });
+    const ids = m.db.prepare("SELECT id FROM episodes ORDER BY id").all() as { id: number }[];
+    m.setEpisodeSummary(ids[0].id, "Replied to the landlord about the lease");
+    m.setEpisodeSummary(ids[1].id, "Refilled a prescription at the pharmacy");
+    const hits = await searchEpisodes(m, null, "pharmacy refill");
+    assert.deepEqual(hits.map((h) => h.summary), ["Refilled a prescription at the pharmacy"]);
+    assert.deepEqual(await searchEpisodes(m, null, "  "), []);
+});
+
+test("the hub answers Search Memory from the menu bar", async () => {
+    const { Brain } = await import("../src/brain.ts");
+    const sent: any[] = [];
+    const b = new Brain({ sendShell: (x) => sent.push(x), decider: null, searchMemory: async (q) => [{ ts: T0, app: "a", summary: `found ${q}`, steps: 3 }] });
+    b.fromShell({ type: "memory_search", query: "lease" });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(sent.find((x) => x.type === "memory_results"), { type: "memory_results", query: "lease", results: [{ ts: T0, app: "a", summary: "found lease", steps: 3 }] });
+});

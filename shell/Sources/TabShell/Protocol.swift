@@ -133,9 +133,10 @@ enum HubToShell: Decodable {
     case iconLabels([IconLabel])
     case exec(ghostId: String, action: Action)
     case hud(Hud)
+    case memoryResults(query: String, results: [MemoryHit])
     case unknown(String)
 
-    private enum K: String, CodingKey { case type, ghost, ghostId, action, hud, items }
+    private enum K: String, CodingKey { case type, ghost, ghostId, action, hud, items, query, results }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -146,6 +147,7 @@ enum HubToShell: Decodable {
         case "icon_labels": self = .iconLabels(try c.decode([IconLabel].self, forKey: .items))
         case "exec": self = .exec(ghostId: try c.decode(String.self, forKey: .ghostId), action: try c.decode(Action.self, forKey: .action))
         case "hud": self = .hud(try c.decode(Hud.self, forKey: .hud))
+        case "memory_results": self = .memoryResults(query: try c.decode(String.self, forKey: .query), results: try c.decode([MemoryHit].self, forKey: .results))
         default: self = .unknown(type)
         }
     }
@@ -161,12 +163,13 @@ enum ShellToHub: Encodable {
     case iconRequest([IconLabeler.Request])
     case paused(Bool)
     case forget(sinceMs: Double)
+    case memorySearch(String)
     case input(kind: String) // "key" | "click"
     case accept(ghostId: String)
     case dismiss(ghostId: String)
     case execResult(ghostId: String, ok: Bool, error: String?)
 
-    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items, paused, sinceMs }
+    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items, paused, sinceMs, query }
 
     func encode(to encoder: Encoder) throws {
         if case .state(let s) = self { return try s.encode(to: encoder) }
@@ -187,6 +190,9 @@ enum ShellToHub: Encodable {
         case .forget(let ms):
             try c.encode("forget", forKey: .type)
             try c.encode(ms, forKey: .sinceMs)
+        case .memorySearch(let q):
+            try c.encode("memory_search", forKey: .type)
+            try c.encode(q, forKey: .query)
         case .iconRequest(let items):
             try c.encode("icon_request", forKey: .type)
             try c.encode(items, forKey: .items)

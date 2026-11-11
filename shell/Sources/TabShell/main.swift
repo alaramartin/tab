@@ -101,6 +101,15 @@ final class Shell: NSObject, InputTapDelegate {
     private var pauseItem: NSMenuItem?
     private var showHudItem: NSMenuItem?
     private var contrastItem: NSMenuItem?
+    private lazy var memorySearch: MemorySearchPanel = {
+        let p = MemorySearchPanel()
+        p.search = { [weak self] q in
+            guard let self, self.hubConnected else { return false }
+            self.hub.send(.memorySearch(q))
+            return true
+        }
+        return p
+    }()
 
     init(hubURL: URL, highContrast: Bool) {
         overlay = Overlay(highContrast: highContrast)
@@ -168,7 +177,9 @@ final class Shell: NSObject, InputTapDelegate {
         let forget = NSMenuItem(title: "Forget the Last Hour", action: #selector(forgetHour), keyEquivalent: "")
         forget.target = self
         menu.addItem(forget)
-        menu.addItem(.separator())
+        let search = NSMenuItem(title: "Search Memory…", action: #selector(openMemorySearch), keyEquivalent: "")
+        search.target = self
+        menu.addItem(search)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit TabShell", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -214,6 +225,8 @@ final class Shell: NSObject, InputTapDelegate {
         overlay.hide()
         log("forget: asked the hub to delete the last hour")
     }
+
+    @objc private func openMemorySearch() { memorySearch.show() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 
@@ -267,6 +280,8 @@ final class Shell: NSObject, InputTapDelegate {
             hud.update(h)
         case .exec(let ghostId, let action):
             exec(ghostId, action)
+        case .memoryResults(let query, let results):
+            memorySearch.show(results: results, for: query)
         case .unknown(let t):
             log("hub: ignoring \(t)")
         }
@@ -544,6 +559,10 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 if let out = flagValue("--render-hud") {
     renderHUD(to: out)
+    exit(0)
+}
+if let out = flagValue("--render-memory-search") {
+    MemorySearchPanel.render(to: out)
     exit(0)
 }
 if let out = flagValue("--render") {

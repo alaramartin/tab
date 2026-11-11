@@ -71,11 +71,20 @@ setInterval(async () => {
 }, 10 * 60_000).unref();
 
 const namer = new IconNamer();
+let searchEmbedder: import("./memory/embed.ts").Embedder | null = null;
 const brain = new Brain({
     sendShell: (m) => out("shell", m),
     sendDetector: (m) => out("payments", m),
     decider,
     memory,
+    searchMemory: memory
+        ? async (query) => {
+              const { searchEpisodes } = await import("./memory/episodes.ts");
+              const { Embedder } = await import("./memory/embed.ts");
+              searchEmbedder ??= new Embedder(memory.db);
+              return (await searchEpisodes(memory, searchEmbedder, query)).map((e) => ({ ts: e.end_ts, app: e.app, summary: e.summary, steps: e.n_steps }));
+          }
+        : undefined,
     nameIcons: namer.server ? (items) => namer.name(items) : undefined,
     recordPayment: record,
     onPredict: ({ source, latencyMs, action }) =>
