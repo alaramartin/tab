@@ -1,9 +1,12 @@
 // The HUD: a small non-activating panel in the top right. Clicking it never steals focus.
-// Compact: what Tab is doing and the last payment. Click the top row for the Tab did / You did breakdown.
+// Compact: what Tab is doing, the last payment, and the Rules row. Click the top row for the Tab did / You did
+// breakdown; click Rules for the user's rules (turn one on or off, remove it, or type a new one). Only the rule text
+// field takes the keyboard, and it gives it back to the app in front after Return or Esc.
 import AppKit
 
 final class HUDPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    // Key only for the rule text field (becomesKeyOnlyIfNeeded): clicks elsewhere on the card never take focus.
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -21,11 +24,19 @@ final class HUD {
         get { view.onClick }
         set { view.onClick = newValue }
     }
+    /// Rule changes for the hub: add, remove, turn on or off, stop the goal in progress.
+    var onRule: ((ShellToHub) -> Void)? {
+        get { view.onRule }
+        set { view.onRule = newValue }
+    }
 
-    private static let expandedKey = "hudExpanded"
+    private static let expandedKey = "hudExpanded", rulesKey = "hudRulesOpen"
+
+    /// A rule is being typed: keys belong to the text field.
+    var isEditing: Bool { panel.isKeyWindow && view.isEditingRule }
 
     init() {
-        let size = HUDView.size(expanded: UserDefaults.standard.bool(forKey: HUD.expandedKey))
+        let size = HUDView.size(expanded: UserDefaults.standard.bool(forKey: HUD.expandedKey), rulesOpen: UserDefaults.standard.bool(forKey: HUD.rulesKey), rules: 0)
         panel = HUDPanel(contentRect: CGRect(origin: .zero, size: size), styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -37,6 +48,7 @@ final class HUD {
         panel.level = .statusBar
         view = HUDView(frame: CGRect(origin: .zero, size: size))
         view.expanded = UserDefaults.standard.bool(forKey: HUD.expandedKey)
+        view.rulesOpen = UserDefaults.standard.bool(forKey: HUD.rulesKey)
         panel.contentView = view
 
         let m = HUDShadowView.margin
@@ -53,6 +65,9 @@ final class HUD {
 
         view.onMoved = { [weak self] in self?.savePosition() }
         view.onToggle = { [weak self] in self?.toggleExpanded() }
+        view.onToggleRules = { [weak self] in self?.toggleRules() }
+        view.onSizeChange = { [weak self] in self?.relayout() }
+        view.onDoneEditing = { [weak self] in self?.giveBackKeyboard() }
         // Every move (drag, place(), the system relocating it after a display change) carries the shadow along.
         moveObserver = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: nil) { [weak self] _ in
             self?.syncShadow()
@@ -85,7 +100,30 @@ final class HUD {
     private func toggleExpanded() {
         view.expanded.toggle()
         UserDefaults.standard.set(view.expanded, forKey: HUD.expandedKey)
-        let s = HUDView.size(expanded: view.expanded)
+        relayout()
+    }
+
+    /// Open or close the Rules list.
+    private func toggleRules() {
+        view.rulesOpen.toggle()
+        UserDefaults.standard.set(view.rulesOpen, forKey: HUD.rulesKey)
+        if !view.rulesOpen { giveBackKeyboard() }
+        relayout()
+    }
+
+    /// The rule field is done (Return, Esc): hand the keyboard back to the app in front. Ordering the key panel out
+    /// and in again makes the window server pick the active app's window as key.
+    private func giveBackKeyboard() {
+        guard panel.isKeyWindow else { return }
+        panel.makeFirstResponder(nil)
+        panel.orderOut(nil)
+        show()
+    }
+
+    /// Resize to what's open; the panel grows or shrinks from its top edge.
+    private func relayout() {
+        let s = view.preferredSize
+        guard s != panel.frame.size else { return }
         let top = panel.frame.maxY
         panel.setFrame(CGRect(x: panel.frame.minX, y: top - s.height, width: s.width, height: s.height), display: true)
         view.frame = CGRect(origin: .zero, size: s)
@@ -138,7 +176,10 @@ final class HUD {
         return Screens.topLeft(panel.frame)
     }
 
-    func update(_ hud: Hud) { view.hud = hud }
+    func update(_ hud: Hud) {
+        view.hud = hud
+        relayout() // the rules list may have grown or shrunk
+    }
     func setConnected(_ c: Bool) { view.connected = c }
     func setHighContrast(_ hc: Bool) { view.highContrast = hc }
 }
@@ -168,9 +209,12 @@ final class HUDShadowView: NSView {
     }
 }
 
-final class HUDView: NSView {
+final class HUDView: NSView, NSTextFieldDelegate {
     static let radius: CGFloat = 12
-    static func size(expanded: Bool) -> CGSize { CGSize(width: 264, height: expanded ? L.compact + L.divY : L.compact) }
+    static func size(expanded: Bool, rulesOpen: Bool = false, rules: Int = 0) -> CGSize {
+        CGSize(width: 264, height: L.compact + (expanded ? L.divY : 0) + (rulesOpen ? L.rulesH(rules) : 0))
+    }
+    var preferredSize: CGSize { HUDView.size(expanded: expanded, rulesOpen: rulesOpen, rules: hud.rules?.count ?? 0) }
 
     /// Layout in flipped points from the card's top. `…Base` values are text baselines.
     private enum L {
@@ -178,7 +222,13 @@ final class HUDView: NSView {
         static let statusY: CGFloat = 10, statusH: CGFloat = 22 // mode dot, what Tab is doing, Tab did N ▸
         static let div1Y: CGFloat = 41
         static let paidY: CGFloat = 50, paidH: CGFloat = 22     // last payment + ledger
-        static let compact: CGFloat = 82                         // the collapsed card ends here
+        static let div2Y: CGFloat = 81
+        static let ruleY: CGFloat = 90, ruleH: CGFloat = 22     // Rules (or the goal in progress) ▸
+        static let compact: CGFloat = 122                        // the collapsed card ends here
+        // The rules list, below the breakdown if that's open (offsets from its own top):
+        static let listY: CGFloat = 8, rowH: CGFloat = 26       // one rule per row
+        static let fieldH: CGFloat = 24                          // the new-rule text field, after the rows
+        static func rulesH(_ n: Int) -> CGFloat { listY + CGFloat(n) * rowH + 4 + fieldH + 12 }
         // The breakdown, below the compact card (offsets from its own top):
         static let keyY: CGFloat = 14, keyH: CGFloat = 18       // [tab] did · You did
         static let numBase: CGFloat = 65                         // the two big numbers
@@ -195,6 +245,7 @@ final class HUDView: NSView {
             seenHud = true
             updateDot()
             retargetCounters()
+            if hud.rules != oldValue.rules { placeField() }
             needsDisplay = true
         }
     }
@@ -214,7 +265,18 @@ final class HUDView: NSView {
     var onMoved: (() -> Void)?
     var onToggle: (() -> Void)?
     /// The Tab did / You did breakdown is open.
-    var expanded = false { didSet { needsDisplay = true } }
+    var expanded = false { didSet { needsDisplay = true; placeField() } }
+    /// The Rules list is open.
+    var rulesOpen = false { didSet { needsDisplay = true; placeField() } }
+    var onRule: ((ShellToHub) -> Void)?
+    var onToggleRules: (() -> Void)?
+    var onSizeChange: (() -> Void)?
+    var onDoneEditing: (() -> Void)?
+    private let field = NSTextField()
+    private let fieldBox = NSView() // the field's rounded background, 8 pt of padding around the text
+    var isEditingRule: Bool { field.currentEditor() != nil }
+    private var ruleRowRect: CGRect = .zero, goalStopRect: CGRect = .zero
+    private var ruleHits: [(id: String, enabled: Bool, toggle: CGRect, remove: CGRect)] = []
     var drawScale: CGFloat = 1
     var countSeconds = 0.35
     /// Layout space: the view's bounds before `drawScale`.
@@ -248,6 +310,52 @@ final class HUDView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        fieldBox.wantsLayer = true
+        fieldBox.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        fieldBox.layer?.cornerRadius = 6
+        field.isBordered = false
+        field.drawsBackground = false
+        field.textColor = primary
+        field.font = .systemFont(ofSize: 12)
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.placeholderAttributedString = NSAttributedString(string: "Booking an event adds it to Calendar",
+                                                               attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: disabled])
+        field.setAccessibilityLabel("New rule")
+        field.delegate = self
+        fieldBox.addSubview(field)
+        addSubview(fieldBox)
+        placeField()
+    }
+
+    /// The new-rule field sits after the last rule; hidden while the list is closed.
+    private func placeField() {
+        fieldBox.isHidden = !rulesOpen
+        guard rulesOpen else { return }
+        let top = L.compact + (expanded ? L.divY : 0) + L.listY + CGFloat(hud.rules?.count ?? 0) * L.rowH + 4
+        fieldBox.frame = CGRect(x: L.padH * drawScale, y: top * drawScale, width: (264 - 2 * L.padH) * drawScale, height: L.fieldH * drawScale)
+        let h = field.intrinsicContentSize.height
+        // fieldBox isn't flipped: y counts from its bottom.
+        field.frame = CGRect(x: 8, y: ((fieldBox.frame.height - h) / 2).rounded(), width: fieldBox.frame.width - 16, height: h)
+    }
+
+    /// Return adds the rule, Esc drops it; either way the keyboard goes back to the app in front.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        if sel == #selector(NSResponder.insertNewline(_:)) {
+            let t = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { onRule?(.ruleAdd(t)) }
+            field.stringValue = ""
+            onDoneEditing?()
+            return true
+        }
+        if sel == #selector(NSResponder.cancelOperation(_:)) {
+            field.stringValue = ""
+            onDoneEditing?()
+            return true
+        }
+        return false
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -416,12 +524,23 @@ final class HUDView: NSView {
         NSColor.white.withAlphaComponent(0.10).setFill()
         CGRect(x: L.padH, y: L.div1Y, width: lb.width - 2 * L.padH, height: 1).fill()
         drawPaid()
+        NSColor.white.withAlphaComponent(0.10).setFill()
+        CGRect(x: L.padH, y: L.div2Y, width: lb.width - 2 * L.padH, height: 1).fill()
+        drawRuleRow()
         if expanded {
+            NSColor.white.withAlphaComponent(0.10).setFill()
             CGRect(x: L.padH, y: L.compact, width: lb.width - 2 * L.padH, height: 1).fill()
             ctx?.saveGState()
             ctx?.translateBy(x: 0, y: L.compact)
             drawBreakdown()
             ctx?.restoreGState()
+        }
+        ruleHits = []
+        if rulesOpen {
+            let y0 = L.compact + (expanded ? L.divY : 0)
+            NSColor.white.withAlphaComponent(0.10).setFill()
+            CGRect(x: L.padH, y: y0, width: lb.width - 2 * L.padH, height: 1).fill()
+            drawRules(top: y0)
         }
         if !connected {
             ctx?.endTransparencyLayer()
@@ -507,6 +626,58 @@ final class HUDView: NSView {
         }
     }
 
+    /// "Rules  2 on ▸", or while a rule is being carried out, its goal in blue with a stop button.
+    private func drawRuleRow() {
+        let x0 = L.padH, x1 = lb.width - L.padH
+        let f = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let base = centred(L.ruleY, L.ruleH, f)
+        ruleRowRect = CGRect(x: 0, y: L.div2Y + 1, width: lb.width, height: L.compact - L.div2Y - 1)
+        let chevron = run(rulesOpen ? "▾" : "▸", .systemFont(ofSize: 11, weight: .semibold), secondary)
+        drawRight(chevron, right: x1, base: base)
+        var right = x1 - width(chevron) - 6
+        goalStopRect = .zero
+        if let goal = hud.goal {
+            let stop = run("stop", .systemFont(ofSize: 11, weight: .semibold), primary)
+            goalStopRect = CGRect(x: right - width(stop) - 16, y: L.ruleY + 1, width: width(stop) + 16, height: L.ruleH - 2)
+            NSColor.white.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: goalStopRect, xRadius: 6, yRadius: 6).fill()
+            draw(stop, x: goalStopRect.minX + 8, base: centred(L.ruleY, L.ruleH, .systemFont(ofSize: 11, weight: .semibold)))
+            right = goalStopRect.minX - 8
+            draw(run("↳ " + goal, f, tabBlueText), x: x0, base: base, maxW: right - x0)
+            return
+        }
+        let rules = hud.rules ?? []
+        let on = rules.filter(\.enabled).count
+        if !rules.isEmpty { drawRight(stat([("\(on)", true), (" on", false)], size: 12), right: right, base: base) }
+        draw(run("Rules", f, rules.isEmpty ? secondary : primary), x: x0, base: base)
+    }
+
+    /// One row per rule: a dot that turns it on or off, its text, and × to remove it. The text field follows.
+    private func drawRules(top: CGFloat) {
+        let x0 = L.padH, x1 = lb.width - L.padH
+        let f = NSFont.systemFont(ofSize: 12)
+        let xf = NSFont.systemFont(ofSize: 13, weight: .medium)
+        for (i, r) in (hud.rules ?? []).enumerated() {
+            let y = top + L.listY + CGFloat(i) * L.rowH
+            let base = centred(y, L.rowH, f)
+            let dot = CGRect(x: x0 + 1, y: y + (L.rowH - 9) / 2, width: 9, height: 9)
+            if r.enabled {
+                tabBlue.setFill()
+                NSBezierPath(ovalIn: dot).fill()
+            } else {
+                secondary.setStroke()
+                let p = NSBezierPath(ovalIn: dot.insetBy(dx: 0.75, dy: 0.75))
+                p.lineWidth = 1.5
+                p.stroke()
+            }
+            let x = run("×", xf, secondary)
+            let xr = CGRect(x: x1 - 18, y: y + 3, width: 20, height: L.rowH - 6)
+            draw(x, x: xr.midX - width(x) / 2, base: base)
+            draw(run(r.text, f, r.enabled ? primary : disabled), x: dot.maxX + 9, base: base, maxW: xr.minX - 4 - (dot.maxX + 9))
+            ruleHits.append((r.id, r.enabled, CGRect(x: 0, y: y, width: xr.minX - 2, height: L.rowH), xr))
+        }
+    }
+
     /// Last payment and the ledger button. Green with a check for 3 s after a payment we saw happen.
     private func drawPaid() {
         let x0 = L.padH, x1 = lb.width - L.padH
@@ -563,8 +734,17 @@ final class HUDView: NSView {
             onToggle?() // the top row opens and closes the breakdown
         } else if ledgerRect.contains(p) {
             if hud.lastTx != nil { onClick?("ledger") }
+        } else if goalStopRect.contains(p) {
+            onRule?(.goalClear)
+        } else if ruleRowRect.contains(p) {
+            onToggleRules?()
+        } else if let h = ruleHits.first(where: { $0.remove.contains(p) }) {
+            onRule?(.ruleRemove(h.id))
+        } else if let h = ruleHits.first(where: { $0.toggle.contains(p) }) {
+            onRule?(.ruleToggle(id: h.id, enabled: !h.enabled))
         }
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
 }
+

@@ -118,6 +118,10 @@ final class Shell: NSObject, InputTapDelegate {
         super.init()
         hud.setHighContrast(highContrast)
         hud.onClick = { [weak self] item in self?.hudClicked(item) }
+        hud.onRule = { [weak self] m in
+            guard let self else { return }
+            if self.hubConnected { self.hub.send(m) } else { log("hud: hub not connected, rule change not sent") }
+        }
         tap.delegate = self
         hub.onMessage = { [weak self] m in self?.handle(m) }
         hub.onConnect = { [weak self] in
@@ -307,7 +311,16 @@ final class Shell: NSObject, InputTapDelegate {
             hub.send(.execResult(ghostId: ghostId, ok: false, error: "shell only executes switch_app, got \(a.op)"))
             return
         }
-        let bid = a.value ?? a.app
+        var bid = a.value ?? a.app
+        // A rule names its app ("Calendar"): find it among running and installed apps.
+        if bid.hasPrefix("name:") {
+            let name = String(bid.dropFirst(5))
+            guard let found = AppSwitcher.bundleId(named: name) else {
+                hub.send(.execResult(ghostId: ghostId, ok: false, error: "no app named \(name)"))
+                return
+            }
+            bid = found
+        }
         AppSwitcher.activate(bid) { [weak self] ok, err in
             log("exec \(ghostId): switch_app \(bid) → \(ok ? "ok" : err ?? "failed")")
             self?.hub.send(.execResult(ghostId: ghostId, ok: ok, error: err))
@@ -330,7 +343,8 @@ final class Shell: NSObject, InputTapDelegate {
 
     // MARK: InputTapDelegate
 
-    var visibleGhost: Ghost? { overlay.current }
+    /// While a rule is being typed in the HUD, Tab and Esc are the text field's, not the ghost's.
+    var visibleGhost: Ghost? { hud.isEditing ? nil : overlay.current }
     var paymentSettling: Bool { overlay.isPaying }
     var ownRects: [CGRect] { [hud.screenRect] }
 
@@ -364,12 +378,28 @@ final class Shell: NSObject, InputTapDelegate {
         if paused { return }
         guard let app = NSWorkspace.shared.frontmostApplication, let bid = appId(app) else { return }
         if kind == .click, ownRects.contains(where: { $0.contains(location) }) { return }
+        if kind == .key, hud.isEditing { return } // typing a rule into the HUD isn't something to record
         actions.observe(RawInput(kind: kind, keyCode: keyCode, flags: flags, chars: chars, location: location,
                                  pid: app.processIdentifier, bundleId: bid, ts: ts))
     }
 }
 
 enum AppSwitcher {
+    /// The bundle id of the app called `name` (case-insensitive): a running one first, then an installed one.
+    static func bundleId(named name: String) -> String? {
+        let n = name.lowercased()
+        if let r = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName?.lowercased() == n && $0.bundleIdentifier != nil }) {
+            return r.bundleIdentifier
+        }
+        let fm = FileManager.default
+        let dirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities", fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path]
+        for d in dirs {
+            guard let items = try? fm.contentsOfDirectory(atPath: d) else { continue }
+            if let hit = items.first(where: { $0.lowercased() == n + ".app" }), let b = Bundle(path: "\(d)/\(hit)")?.bundleIdentifier { return b }
+        }
+        return nil
+    }
+
     /// Activate by bundle id. A background (LSUIElement) app can't always activate others under cooperative activation,
     /// so try NSRunningApplication, then AX frontmost, then LaunchServices; confirm by pid.
     static func activate(_ bid: String, done: @escaping (Bool, String?) -> Void) {
@@ -497,6 +527,9 @@ func renderSelftest(to out: String) {
 
 /// Every HUD state side by side, with its shadow, 4 per row (--dark: on a dark page).
 func renderHUD(to out: String) {
+    let rules = [HudRule(id: "a", text: "booking an event adds it to Calendar", enabled: true),
+                 HudRule(id: "b", text: "after merging a PR, post the link in the team channel on Slack", enabled: true),
+                 HudRule(id: "c", text: "paying rent logs it in Numbers", enabled: false)]
     let tx = LastTx(hash: "0x8f3a91c2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
                     explorerUrl: "https://sepolia.basescan.org/tx/0x8f3a", amountUsd: "0.30")
     // (name, connected, high contrast, hud before, hud). A tx that appears between `before` and `hud` is a payment
@@ -520,19 +553,26 @@ func renderHUD(to out: String) {
         ("stress", true, false, nil,
          Hud(mode: "predicting", lastSource: "pattern", lastLatencyMs: 1234, modelCalls: 99, shown: 99, accepted: 99, tabDid: TabDid(clicks: 480, keys: 754),
              youDid: 9999, lastTx: LastTx(hash: tx.hash, explorerUrl: tx.explorerUrl, amountUsd: "1234.56"))),
+        ("rules open", true, false, nil,
+         Hud(mode: "idle", modelCalls: 2, shown: 3, accepted: 2, tabDid: TabDid(clicks: 3, keys: 12), youDid: 20, rules: rules)),
+        ("a rule in progress", true, false, nil,
+         Hud(mode: "shown", lastSource: "model", lastLatencyMs: 402, modelCalls: 5, shown: 4, accepted: 3, tabDid: TabDid(clicks: 4, keys: 12), youDid: 21,
+             rules: rules, goal: "Add Night Owls · Fri 9pm to Calendar")),
     ]
-    let s = HUDView.size(expanded: true)
+    let s = HUDView.size(expanded: true, rulesOpen: true, rules: rules.count)
     let gap: CGFloat = 48, cols = 4
     let rows = (states.count + cols - 1) / cols
     let root = BackgroundView(frame: CGRect(x: 0, y: 0, width: CGFloat(cols) * (s.width + gap) + gap, height: CGFloat(rows) * (s.height + gap) + gap))
     root.dark = args.contains("--dark")
     for (i, (name, connected, hc, before, h)) in states.enumerated() {
         let o = CGPoint(x: gap + CGFloat(i % cols) * (s.width + gap), y: gap + CGFloat(i / cols) * (s.height + gap))
-        let open = i % 2 == 1 // every other one with the breakdown open
-        let vs = HUDView.size(expanded: open)
+        let open = i % 2 == 1 && h.rules == nil // every other one with the breakdown open
+        let rulesOpen = h.rules != nil && h.goal == nil
+        let vs = HUDView.size(expanded: open, rulesOpen: rulesOpen, rules: h.rules?.count ?? 0)
         root.addSubview(HUDShadowView(frame: CGRect(x: o.x - HUDShadowView.margin, y: o.y - HUDShadowView.margin, width: vs.width + 2 * HUDShadowView.margin, height: vs.height + 2 * HUDShadowView.margin)))
         let v = HUDView(frame: CGRect(origin: o, size: vs))
         v.expanded = open
+        v.rulesOpen = rulesOpen
         v.connected = connected
         if let before { v.hud = before }
         v.hud = h
