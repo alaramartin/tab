@@ -8,6 +8,7 @@ export interface ModelInput {
     active: ScreenState;
     others: ScreenState[];
     history: HistEntry[];
+    goal?: string; // a rule being carried out: what the next steps should work toward
 }
 
 export interface Decider {

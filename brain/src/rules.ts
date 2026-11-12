@@ -1,0 +1,210 @@
+// Rules: short instructions the user writes in the HUD, such as "booking an event adds it to Calendar".
+// Each rule is split into a trigger ("booking an event") and a goal ("add it to Calendar"), with the app the goal
+// names, if any. After the user finishes something and pauses, the local model checks each rule's trigger against
+// what they just did. A match is offered as a ghost (`Rule: Add Night Owls · Fri 9pm to Calendar ⇥`). Accepting it
+// opens the app and makes the goal the model's aim, so the next ghosts walk toward it one Tab at a time.
+//
+// Rules live in ~/.tab/rules.json (TAB_RULES_FILE overrides it), so they can also be edited by hand.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { ScreenState } from "../../protocol/types.ts";
+import { appName, historyLines, screenLines } from "./predict/generic.ts";
+import type { PastStep } from "./predict/types.ts";
+import { chatPrompt, type LlamaServer } from "./runtime/llama.ts";
+
+export interface Rule {
+    id: string;
+    text: string;
+    enabled: boolean;
+    created: number;
+}
+
+export interface ParsedRule {
+    trigger: string;
+    goal: string;
+    app?: string; // an app the goal names ("Calendar"), resolved by name in the shell
+}
+
+export const DEFAULT_RULES_FILE = join(homedir(), ".tab", "rules.json");
+const MAX_RULES = 20;
+const MAX_TEXT = 160;
+
+// Verbs that start the "what Tab does" half of "<doing X> <verb>s <Y>".
+const VERBS = "adds?|sends?|saves?|puts?|copies|copy|moves?|opens?|creates?|files?|logs?|shares?|emails?|posts?|forwards?|archives?|books?|schedules?|reminds?|texts?|messages?|notes?|records?|tags?|labels?|starts?|makes?|writes?|updates?|exports?|uploads?|downloads?|prints?|pins?|stars?|tracks?";
+
+/** "copies" → "copy", "adds" → "add". */
+function base(verb: string): string {
+    const v = verb.toLowerCase();
+    if (v.endsWith("ies")) return v.slice(0, -3) + "y";
+    if (/(ss|sh|ch|x)es$/.test(v)) return v.slice(0, -2);
+    if (v.endsWith("s") && !v.endsWith("ss")) return v.slice(0, -1);
+    return v;
+}
+
+/** Split a rule into trigger and goal. Lenient: when no shape fits, the whole text is both. */
+export function parseRule(text: string): ParsedRule {
+    const t = text.trim().replace(/[.!]+$/, "");
+    let trigger = t, goal = t;
+    let m: RegExpMatchArray | null;
+    if ((m = t.match(/^(?:when(?:ever)?|after|if|once)\s+(.+?)\s*(?:,|\bthen\b|→|->)\s*(?:then\s+)?(.+)$/i))) [trigger, goal] = [m[1], m[2]];
+    else if ((m = t.match(/^(.+?)\s*(?:→|->|=>|:)\s*(.+)$/))) [trigger, goal] = [m[1], m[2]];
+    else if ((m = t.match(/^(.+?)\s*,?\s+then\s+(.+)$/i))) [trigger, goal] = [m[1], m[2]];
+    else if ((m = t.match(new RegExp(`^(.+?)\\s+(?:should\\s+)?(${VERBS})\\s+(.+)$`, "i"))) && m[1].split(/\s+/).length >= 2) {
+        trigger = m[1];
+        goal = `${base(m[2])} ${m[3]}`;
+    }
+    goal = goal.replace(/^(?:tab\s+)?(?:should\s+)?/i, "");
+    goal = goal[0] ? goal[0].toUpperCase() + goal.slice(1) : goal;
+    const app = goal.match(/\b(?:to|in|into|on|with|via|using|from)\s+(?:my\s+|the\s+)?([A-Za-z][\w.]*(?:\s[A-Z][\w.]*)?)$/)?.[1];
+    return { trigger: trigger.trim(), goal: goal.trim(), ...(app ? { app: app[0].toUpperCase() + app.slice(1) } : {}) };
+}
+
+export class RuleBook {
+    private rules: Rule[] = [];
+    private seq = 0;
+
+    /** `file` null keeps rules in memory only (tests). */
+    constructor(private file: string | null = DEFAULT_RULES_FILE) {
+        if (file && existsSync(file)) {
+            try {
+                const raw = JSON.parse(readFileSync(file, "utf8"));
+                const list: unknown[] = Array.isArray(raw) ? raw : Array.isArray(raw?.rules) ? raw.rules : [];
+                for (const r of list) {
+                    const x = r as Partial<Rule> | string;
+                    const text = typeof x === "string" ? x : x?.text;
+                    if (typeof text !== "string" || !text.trim()) continue;
+                    this.rules.push({
+                        id: typeof x === "object" && x.id ? String(x.id) : this.nextId(),
+                        text: text.trim().slice(0, MAX_TEXT),
+                        enabled: typeof x === "object" ? x.enabled !== false : true,
+                        created: typeof x === "object" && typeof x.created === "number" ? x.created : Date.now(),
+                    });
+                }
+            } catch (err) {
+                console.error(`[rules] ${file}: ${(err as Error).message}`);
+            }
+        }
+    }
+
+    private nextId(): string {
+        return `r${Date.now().toString(36)}${(this.seq++).toString(36)}`;
+    }
+
+    list(): Rule[] {
+        return this.rules.map((r) => ({ ...r }));
+    }
+
+    enabled(): Rule[] {
+        return this.rules.filter((r) => r.enabled);
+    }
+
+    add(text: string): Rule | null {
+        const t = text.trim().replace(/\s+/g, " ").slice(0, MAX_TEXT);
+        if (!t || this.rules.length >= MAX_RULES || this.rules.some((r) => r.text.toLowerCase() === t.toLowerCase())) return null;
+        const r: Rule = { id: this.nextId(), text: t, enabled: true, created: Date.now() };
+        this.rules.push(r);
+        this.save();
+        return r;
+    }
+
+    remove(id: string): boolean {
+        const n = this.rules.length;
+        this.rules = this.rules.filter((r) => r.id !== id);
+        if (this.rules.length === n) return false;
+        this.save();
+        return true;
+    }
+
+    setEnabled(id: string, on: boolean): boolean {
+        const r = this.rules.find((x) => x.id === id);
+        if (!r || r.enabled === on) return false;
+        r.enabled = on;
+        this.save();
+        return true;
+    }
+
+    private save(): void {
+        if (!this.file) return;
+        try {
+            mkdirSync(dirname(this.file), { recursive: true });
+            writeFileSync(this.file, JSON.stringify({ rules: this.rules }, null, 2) + "\n");
+        } catch (err) {
+            console.error(`[rules] save: ${(err as Error).message}`);
+        }
+    }
+}
+
+/** What a rule check sees: the screen now and the steps that led to it. */
+export interface RuleContext {
+    now: number;
+    active: ScreenState;
+    history: PastStep[];
+}
+
+export interface RuleMatch {
+    rule: Rule;
+    parsed: ParsedRule;
+    score: number; // probability the trigger just happened
+    task: string; // the goal made concrete: "Add Night Owls · Fri 9pm to Calendar"
+}
+
+export interface RuleChecker {
+    /** The best-matching rule for what just happened, or null. */
+    check(rules: Rule[], ctx: RuleContext, signal?: AbortSignal): Promise<RuleMatch | null>;
+}
+
+function contextText(ctx: RuleContext): string {
+    const s = ctx.active;
+    const screen = screenLines(s, 20).map((l) => `- ${l}`).join("\n");
+    const hist = historyLines(ctx.history, ctx.now, 8).map((l) => `- ${l}`).join("\n") || "- none";
+    return `App: ${appName(s.app)} · Window: "${s.window.slice(0, 60)}"${s.url ? ` · ${s.url.slice(0, 80)}` : ""}\nScreen now (top to bottom):\n${screen}\n\nWhat they just did (oldest first):\n${hist}`;
+}
+
+const CHECK_SYSTEM = "You decide whether a person has just finished a kind of task on their computer, from their screen and recent actions. Answer Yes or No.";
+const TASK_SYSTEM = "You write one short follow-up task, like a to-do item, with the specifics from the screen (names, dates, times, amounts). Under 12 words. No preamble, no quotes.";
+export const MATCH_AT = 0.7;
+
+/** Rule checks with the local model: one Yes/No forward pass per rule, then one short line for the matching one. */
+export class LlamaRuleChecker implements RuleChecker {
+    constructor(private server: LlamaServer) {}
+
+    async check(rules: Rule[], ctx: RuleContext, signal?: AbortSignal): Promise<RuleMatch | null> {
+        const family = this.server.spec.family ?? "qwen3";
+        const context = contextText(ctx);
+        let best: { rule: Rule; parsed: ParsedRule; score: number } | null = null;
+        for (const rule of rules.slice(0, MAX_RULES)) {
+            const parsed = parseRule(rule.text);
+            const user = `${context}\n\nTask: ${parsed.trigger}\nHave they just finished this task (on this screen or in the actions above)? Answer Yes or No.`;
+            const r = await this.server.complete(chatPrompt(family, CHECK_SYSTEM, user), { nPredict: 1, nProbs: 10, signal });
+            let yes = 0, no = 0;
+            for (const t of r.first) {
+                const k = t.token.trim().toLowerCase();
+                if (k === "yes") yes += t.prob;
+                else if (k === "no") no += t.prob;
+            }
+            const score = yes + no > 0 ? yes / (yes + no) : 0;
+            if (score >= MATCH_AT && (!best || score > best.score)) best = { rule, parsed, score };
+        }
+        if (!best) return null;
+        const user = `${context}\n\nThey just did: ${best.parsed.trigger}\nFollow-up to do now: ${best.parsed.goal}\nWrite that follow-up for this case:`;
+        const r = await this.server.complete(chatPrompt(family, TASK_SYSTEM, user), { nPredict: 28, stop: ["\n", "<|im_end|>"], signal });
+        const task = r.text.trim().replace(/^["'\-•]+|["'.]+$/g, "").slice(0, 80) || best.parsed.goal;
+        return { ...best, task };
+    }
+}
+
+/** Without the model: a rule matches when every content word of its trigger (or its stem) is on screen or in the last steps. */
+export class KeywordRuleChecker implements RuleChecker {
+    async check(rules: Rule[], ctx: RuleContext): Promise<RuleMatch | null> {
+        const hay = contextText(ctx).toLowerCase();
+        const STOP = new Set(["a", "an", "the", "my", "to", "in", "on", "for", "of", "and", "or", "it", "something", "any", "some", "i", "you"]);
+        for (const rule of rules) {
+            const parsed = parseRule(rule.text);
+            const words = parsed.trigger.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !STOP.has(w));
+            const stem = (w: string) => w.replace(/(ing|ed|es|s)$/, "").slice(0, Math.max(4, w.length - 3));
+            if (words.length && words.every((w) => hay.includes(stem(w)))) return { rule, parsed, score: 0.75, task: parsed.goal };
+        }
+        return null;
+    }
+}

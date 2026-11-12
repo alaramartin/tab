@@ -11,6 +11,7 @@ const LETTERS = "ABCDEFGHIJKLMNOP";
 const SYSTEM = `You predict the next single action a person will take on their computer.
 You see the current screen, their recent actions, and numbered options.
 Prefer continuing what the recent actions are doing: the next field of a form, the next row of a repeated chore, the button that submits what was just filled in.
+When a goal is given, pick the action that moves toward it; "None of these" when it's done or no option helps.
 Reply with only the letter of the most likely next action, or the letter for "None of these" if no option fits.`;
 
 export class LocalModelTier implements Predictor {
@@ -40,7 +41,7 @@ export class LocalModelTier implements Predictor {
             other.length ? `\nPreviously seen screen, ${other[0]}:\n${other.slice(1).map((l) => `- ${l}`).join("\n")}\n` : ""
         }\nRecent actions (oldest first):\n${
             hist.length ? hist.map((l) => `- ${l}`).join("\n") : "- none"
-        }\n${earlier.length ? `\nEarlier in this app:\n${earlier.map((l) => `- ${l}`).join("\n")}\n` : ""}\nWhat will they do next?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
+        }\n${earlier.length ? `\nEarlier in this app:\n${earlier.map((l) => `- ${l}`).join("\n")}\n` : ""}\n${ctx.goal ? `Their goal right now: ${ctx.goal.slice(0, 120)}\n\nWhat should they do next to reach it?` : "What will they do next?"}\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
         return { actions, prompt: chatPrompt(this.server.spec.family ?? "lfm", SYSTEM, user), n: options.length };
     }
 

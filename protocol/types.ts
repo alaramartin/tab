@@ -67,7 +67,7 @@ export interface UserEvent {
     ts: number;
 }
 
-export type Op = "click" | "type" | "key" | "navigate" | "switch_app" | "sequence";
+export type Op = "click" | "type" | "key" | "navigate" | "switch_app" | "sequence" | "goal";
 
 export interface Action {
     op: Op;
@@ -78,6 +78,7 @@ export interface Action {
     targetPath?: string; // resolved against the latest state of `app`
     value?: string; // text, option label (for selects), key name, url, or bundle id
     steps?: Action[]; // op === 'sequence'; run by the hub
+    goal?: { ruleId: string; task: string; app?: string }; // op === 'goal': a rule matched; accepting makes `task` the aim (hub only)
     label: string; // pill text without the key glyph, e.g. "Click Checkout", "Repeat for ENG-150 · #13"
     confidence: number; // 0..1
     source: "pattern" | "model";
@@ -107,6 +108,15 @@ export interface Hud {
     tabDid: { clicks: number; keys: number }; // what Tab executed for the user
     youDid: number; // every real user input, including Tab/Esc presses
     lastTx?: { hash: string; explorerUrl: string; amountUsd: string };
+    rules?: HudRule[]; // the user's rules, for the HUD's Rules list
+    goal?: string; // a rule being carried out: what the ghosts are working toward
+}
+
+/** A rule as the HUD lists it: what the user wrote, and whether it's on. */
+export interface HudRule {
+    id: string;
+    text: string;
+    enabled: boolean;
 }
 
 // ---- TabShell → hub ----
@@ -119,6 +129,10 @@ export type ShellToHub =
     | { type: "paused"; paused: boolean } // menu bar → Pause Tab
     | { type: "forget"; sinceMs: number } // menu bar → Forget the Last Hour
     | { type: "memory_search"; query: string } // menu bar → Search Memory
+    | { type: "rule_add"; text: string } // HUD → Rules
+    | { type: "rule_remove"; id: string }
+    | { type: "rule_toggle"; id: string; enabled: boolean }
+    | { type: "goal_clear" } // HUD → stop working toward a rule's goal
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }
     | { type: "dismiss"; ghostId: string }

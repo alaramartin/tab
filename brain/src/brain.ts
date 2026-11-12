@@ -11,10 +11,13 @@ import { parseChallenge, pay, type Paid } from "./pay/x402.ts";
 import { contentSig, findEl, StateStore, stateKey } from "./state.ts";
 import { deriveProvenance } from "./memory/provenance.ts";
 import { toPast } from "./predict/decider.ts";
+import type { RuleBook, RuleChecker, RuleMatch } from "./rules.ts";
 
 const DEBOUNCE_MS = 40; // fast tiers take ~1 ms: predict as soon as a screen settles
 const IDLE_MS = 600; // model ghosts wait for this much quiet
 const SHOW_AT = 0.6;
+const GOAL_SHOW_AT = 0.4; // working toward a rule's goal: the model's step is offered at lower confidence
+const GOAL_MS = 3 * 60_000; // a goal lapses after this long without an accepted step
 const EXEC_TIMEOUT_MS = 8000; // a step may wait up to 3 s for its target, then type
 const STATE_WAIT_MS = 1000;
 const ECHO_MS = 400; // input caused by our own steps, still arriving after a sequence
@@ -38,6 +41,8 @@ export interface BrainOpts {
     decider: Decider | null;
     /** Search Memory in the menu bar: past tasks by meaning (memory/episodes.ts). */
     searchMemory?(query: string): Promise<MemoryHit[]>;
+    /** The user's rules (HUD → Rules) and what checks them against what just happened (src/rules.ts). */
+    rules?: { book: RuleBook; checker: RuleChecker };
     /** Tests: predict right away instead of debouncing and waiting for idle. */
     immediate?: boolean;
     /** Name icon-only controls from their pixels (the local vision model); omit to leave them unnamed. */
@@ -75,9 +80,25 @@ export class Brain {
     private modelCache: { key: string; action: Action | null } | null = null;
     private modelAbort: AbortController | null = null;
     private paused = false;
+    /** A rule being carried out: the model's ghosts work toward `task` until it lapses or the user stops it. */
+    private goal: { task: string; ruleId: string; until: number } | null = null;
+    private ruleCheckDue = false; // the user finished something: check the rules once they pause
 
     constructor(private o: BrainOpts) {
         this.pattern = new PatternEngine(o.memory ?? null);
+        this.syncRules();
+    }
+
+    private syncRules(): void {
+        const list = this.o.rules?.book.list();
+        if (list) this.hud.rules = list.map(({ id, text, enabled }) => ({ id, text, enabled }));
+    }
+
+    private setGoal(g: Brain["goal"]): void {
+        this.goal = g;
+        if (g) this.hud.goal = g.task;
+        else delete this.hud.goal;
+        this.sendHud();
     }
 
     private pushHistory(e: HistEntry): void {
@@ -139,6 +160,22 @@ export class Brain {
                 else this.o.searchMemory(query).then(reply, (err) => (console.error("[memory] search:", (err as Error).message), reply([])));
                 break;
             }
+            case "rule_add":
+                if (this.o.rules?.book.add(String(m.text ?? ""))) this.syncRules();
+                this.sendHud();
+                break;
+            case "rule_remove":
+                if (this.o.rules?.book.remove(String(m.id))) this.syncRules();
+                this.sendHud();
+                break;
+            case "rule_toggle":
+                if (this.o.rules?.book.setEnabled(String(m.id), !!m.enabled)) this.syncRules();
+                this.sendHud();
+                break;
+            case "goal_clear":
+                this.setGoal(null);
+                this.hide();
+                break;
             case "icon_request":
                 if (this.o.nameIcons && Array.isArray(m.items) && m.items.length)
                     this.o.nameIcons(m.items).then(
@@ -231,6 +268,7 @@ export class Brain {
         });
         this.dismissedKey = null; // the user did something: everything may be offered again
         const finishing = (e.kind === "click" && e.target?.role === "button") || (e.kind === "key" && (e.value === "Return" || e.value === "Enter"));
+        if (finishing) this.ruleCheckDue = true;
         this.onUserInput(finishing, true);
     }
 
@@ -269,12 +307,15 @@ export class Brain {
         const active = this.store.active();
         if (!active) return;
         const now = Date.now();
+        if (this.goal && now > this.goal.until) this.setGoal(null);
 
         // 1. A chore taught once, repeated for the next row; or one learned earlier, for a whole list.
+        // (Not while working toward a rule's goal: then every ghost is the model's step toward it.)
         const t0 = performance.now();
-        const pa =
-            this.pattern.predict(this.history.entries, this.store.recent(now), now) ??
-            this.pattern.recall(active, this.store.recent(now), now, this.history.entries, this.activeSince);
+        const pa = this.goal
+            ? null
+            : (this.pattern.predict(this.history.entries, this.store.recent(now), now) ??
+              this.pattern.recall(active, this.store.recent(now), now, this.history.entries, this.activeSince));
         const pMs = performance.now() - t0;
         if (pa && this.maybeShow(pa, gen, pMs)) return this.logPred("pattern", pMs, pa);
 
@@ -282,7 +323,7 @@ export class Brain {
         // the user has paused, and is aborted as soon as anything changes.
         const decider = this.o.decider;
         if (!decider) return;
-        if (decider.fast) {
+        if (decider.fast && !this.goal) {
             const t3 = performance.now();
             const fa = decider.fast({ active, others: this.store.recent(now), history: this.history.entries });
             const fMs = performance.now() - t3;
@@ -295,7 +336,11 @@ export class Brain {
                 return;
             }
         }
-        const key = `${stateKey(active)}\n${contentSig(active)}\n${this.history.entries.length}:${this.history.entries.at(-1)?.ts ?? 0}`;
+        // 3. The user finished something and paused: does one of their rules apply?
+        if (this.ruleCheckDue && (await this.checkRules(active, gen))) return;
+        if (gen !== this.gen) return;
+        const goal = this.goal?.task;
+        const key = `${stateKey(active)}\n${contentSig(active)}\n${this.history.entries.length}:${this.history.entries.at(-1)?.ts ?? 0}\n${goal ?? ""}`;
         let action: Action | null;
         let ms = 0;
         if (this.modelCache?.key === key) {
@@ -308,7 +353,7 @@ export class Brain {
                 this.hud.modelCalls++;
                 this.modelAbort?.abort();
                 const ctl = (this.modelAbort = new AbortController());
-                action = await decider.decide({ active, others: this.store.recent(Date.now()), history: this.history.entries }, ctl.signal);
+                action = await decider.decide({ active, others: this.store.recent(Date.now()), history: this.history.entries, ...(goal ? { goal } : {}) }, ctl.signal);
             } catch (err) {
                 if ((err as Error).name !== "AbortError") console.error(`[model] ${decider.name}:`, (err as Error).message);
                 action = null;
@@ -322,9 +367,39 @@ export class Brain {
         if (!shown) this.sendHud();
     }
 
+    /** Check the enabled rules against what just happened; offer the best match as a ghost. True if one is up. */
+    private async checkRules(active: ScreenState, gen: number): Promise<boolean> {
+        this.ruleCheckDue = false;
+        const r = this.o.rules;
+        const rules = r?.book.enabled() ?? [];
+        if (!r || !rules.length || this.goal) return false;
+        let match: RuleMatch | null = null;
+        const t0 = performance.now();
+        try {
+            this.modelAbort?.abort();
+            const ctl = (this.modelAbort = new AbortController());
+            match = await r.checker.check(rules, { now: Date.now(), active, history: this.history.entries.map(toPast) }, ctl.signal);
+        } catch (err) {
+            if ((err as Error).name !== "AbortError") console.error("[rules]", (err as Error).message);
+            return false;
+        }
+        if (!match || gen !== this.gen) return false;
+        const { parsed } = match;
+        const a: Action = {
+            op: "goal",
+            app: active.app,
+            value: match.task,
+            label: `Rule: ${match.task}`,
+            confidence: Math.max(match.score, SHOW_AT),
+            source: "model",
+            goal: { ruleId: match.rule.id, task: match.task, ...(parsed.app ? { app: parsed.app } : {}) },
+        };
+        return this.maybeShow(a, gen, performance.now() - t0);
+    }
+
     private maybeShow(a: Action, gen: number, latencyMs: number): boolean {
         if (gen !== this.gen || this.running) return false;
-        if (a.confidence < SHOW_AT) return false;
+        if (a.confidence < (this.goal && a.source === "model" ? GOAL_SHOW_AT : SHOW_AT)) return false;
         if (actionKey(a) === this.dismissedKey) return false;
         if (this.shown?.action && actionKey(this.shown.action) === actionKey(a)) return true; // already up
         const ghost = this.buildGhost(a);
@@ -348,7 +423,7 @@ export class Brain {
         if (!el) {
             // Offers without a target of their own (open a URL, a key, a sequence that starts elsewhere) sit at the
             // insertion point of the focused field, else near the last click, else at the top of the screen.
-            if (a.op !== "navigate" && a.op !== "sequence" && a.op !== "key") return null;
+            if (a.op !== "navigate" && a.op !== "sequence" && a.op !== "key" && a.op !== "goal") return null;
             const focused = active?.elements.find((e) => e.focused);
             if (focused?.caret) return { id, kind: "action", label, pillAt: { x: focused.caret.x, y: focused.caret.y + focused.caret.h + 34 } };
             const near = this.lastClickedRect() ?? (focused && focused.rect.w > 0 ? { ...focused.rect, y: focused.rect.y + focused.rect.h - 60, h: 0 } : undefined);
@@ -418,9 +493,24 @@ export class Brain {
         if (!s.action) return;
         this.remember(() => this.o.memory?.ghostOutcome(ghostId, "accepted"));
         this.hud.accepted++;
+        if (s.action.op === "goal" && s.action.goal) return this.startGoal(ghostId, s.action.goal);
+        if (this.goal) this.goal.until = Date.now() + GOAL_MS; // a step toward it: keep going
         const steps: Step[] = s.action.op === "sequence" ? (s.action.steps as Step[]) : [s.action];
         const ok = await this.run(ghostId, steps);
         if (ok && s.action.source === "pattern" && (s.action as PatternAction).sig) this.pattern.onAccepted((s.action as PatternAction).sig);
+    }
+
+    /** A rule's ghost was accepted: open the app its goal names, then let the model's ghosts work toward the goal. */
+    private async startGoal(ghostId: string, g: NonNullable<Action["goal"]>): Promise<void> {
+        this.hide();
+        this.setGoal({ task: g.task, ruleId: g.ruleId, until: Date.now() + GOAL_MS });
+        if (g.app) {
+            const sw: Action = { op: "switch_app", app: `name:${g.app}`, value: `name:${g.app}`, label: "", confidence: 1, source: "model" };
+            const r = await this.exec(`${ghostId}:open`, sw);
+            if (r.ok) countStep(this.hud, sw);
+            else console.log(`[rules] couldn't open ${g.app}: ${r.error}; working toward the goal here`);
+        }
+        this.onUserInput(false, true);
     }
 
     private onDismiss(ghostId: string): void {
@@ -434,6 +524,7 @@ export class Brain {
             this.o.sendDetector?.({ type: "payment_declined", paymentId: s.paymentId });
             this.payment = null;
         }
+        if (this.goal && s.action?.op !== "goal") this.setGoal(null); // Esc on a step toward a goal stops working on it
         if (s.action) {
             const a = s.action;
             this.dismissedKey = actionKey(a);

@@ -1,0 +1,105 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import type { HubToShell, ScreenState } from "../../protocol/types.ts";
+import { Brain } from "../src/brain.ts";
+import type { Decider, ModelInput } from "../src/model.ts";
+import { KeywordRuleChecker, parseRule, RuleBook, type RuleChecker } from "../src/rules.ts";
+import { el } from "./screens.ts";
+
+test("rules split into a trigger, a goal and the app the goal names", () => {
+    assert.deepEqual(parseRule("booking an event adds it to calendar"), { trigger: "booking an event", goal: "Add it to calendar", app: "Calendar" });
+    assert.deepEqual(parseRule("When I get an invoice, save it to Dropbox."), { trigger: "I get an invoice", goal: "Save it to Dropbox", app: "Dropbox" });
+    assert.deepEqual(parseRule("after merging a PR → post in Slack"), { trigger: "merging a PR", goal: "Post in Slack", app: "Slack" });
+    assert.deepEqual(parseRule("paying a bill copies the amount to Numbers"), { trigger: "paying a bill", goal: "Copy the amount to Numbers", app: "Numbers" });
+    assert.deepEqual(parseRule("archive newsletters"), { trigger: "archive newsletters", goal: "Archive newsletters" });
+});
+
+test("the rule book keeps rules in a file you can edit by hand", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "tab-rules-")), "rules.json");
+    const a = new RuleBook(f);
+    const r = a.add("  booking an event   adds it to Calendar ")!;
+    assert.equal(r.text, "booking an event adds it to Calendar");
+    assert.equal(a.add("Booking an event adds it to calendar"), null, "no duplicates");
+    a.add("after merging a PR, post in Slack");
+    a.setEnabled(r.id, false);
+    const b = new RuleBook(f);
+    assert.deepEqual(b.list().map((x) => [x.text, x.enabled]), [["booking an event adds it to Calendar", false], ["after merging a PR, post in Slack", true]]);
+    b.remove(r.id);
+    assert.equal(new RuleBook(f).list().length, 1);
+    writeFileSync(f, JSON.stringify(["paying rent logs it in Numbers"]));
+    assert.equal(new RuleBook(f).enabled()[0].text, "paying rent logs it in Numbers", "a plain list of strings works too");
+    assert.ok(readFileSync(f, "utf8"));
+});
+
+const T = Date.now();
+const confirmed = (): ScreenState => ({
+    type: "state", app: "com.google.Chrome", window: "Booking confirmed", seq: 1, ts: T,
+    elements: [el("text:Your booking is confirmed", "text", "Your booking is confirmed"), el("text:Night Owls", "text", "Event: Night Owls · Fri 9pm"), el("desc:Done", "button", "Done")],
+});
+
+test("without the model, a rule matches when the words of its trigger are on screen", async () => {
+    const c = new KeywordRuleChecker();
+    const rules = [{ id: "a", text: "booking an event adds it to Calendar", enabled: true, created: 0 }];
+    const m = await c.check(rules, { now: T, active: confirmed(), history: [] });
+    assert.equal(m?.rule.id, "a");
+    assert.equal(await c.check([{ id: "b", text: "paying a bill copies it to Numbers", enabled: true, created: 0 }], { now: T, active: confirmed(), history: [] }), null);
+});
+
+test("a matching rule is offered as a ghost; accepting it opens the app and the model's ghosts work toward the goal", async () => {
+    const shell: HubToShell[] = [];
+    const goals: (string | undefined)[] = [];
+    let b!: Brain;
+    const checker: RuleChecker = {
+        async check(rules) {
+            const rule = rules[0];
+            return { rule, parsed: parseRule(rule.text), score: 0.9, task: "Add Night Owls · Fri 9pm to Calendar" };
+        },
+    };
+    const decider: Decider = {
+        name: "test",
+        async decide(m: ModelInput) {
+            goals.push(m.goal);
+            return m.goal ? { op: "click", app: m.active.app, targetId: "desc:New Event", targetPath: "desc:New Event", label: "Click New Event", confidence: 0.5, source: "model" } : null;
+        },
+    };
+    b = new Brain({
+        immediate: true,
+        decider,
+        rules: { book: new RuleBook(null), checker },
+        sendShell: (m) => {
+            shell.push(m);
+            if (m.type === "exec") queueMicrotask(() => b.fromShell({ type: "exec_result", ghostId: m.ghostId, ok: true }));
+        },
+    });
+    b.fromShell({ type: "rule_add", text: "booking an event adds it to Calendar" });
+    const hud = () => (shell.filter((m) => m.type === "hud").at(-1) as any).hud;
+    assert.deepEqual(hud().rules.map((r: any) => r.text), ["booking an event adds it to Calendar"]);
+
+    b.fromShell({ type: "frontmost", app: "com.google.Chrome", window: "Booking confirmed" });
+    b.fromShell(confirmed());
+    b.fromShell({ type: "user_event", app: "com.google.Chrome", kind: "click", target: el("desc:Book", "button", "Book"), ts: T });
+    await b.predictNow();
+    const ghost = (shell.filter((m) => m.type === "ghost").at(-1) as any)?.ghost;
+    assert.equal(ghost?.label, "Rule: Add Night Owls · Fri 9pm to Calendar ⇥");
+
+    b.fromShell({ type: "accept", ghostId: ghost.id });
+    await new Promise((r) => setTimeout(r, 10));
+    const exec = shell.find((m) => m.type === "exec") as any;
+    assert.deepEqual([exec?.action.op, exec?.action.app], ["switch_app", "name:Calendar"]);
+    assert.equal(hud().goal, "Add Night Owls · Fri 9pm to Calendar");
+
+    // In Calendar: the model's step toward the goal is offered, even at 0.5.
+    b.fromShell({ type: "frontmost", app: "com.apple.iCal", window: "Calendar" });
+    b.fromShell({ type: "state", app: "com.apple.iCal", window: "Calendar", seq: 2, ts: T + 100, elements: [el("desc:New Event", "button", "New Event")] });
+    await b.predictNow();
+    assert.equal(goals.at(-1), "Add Night Owls · Fri 9pm to Calendar");
+    const step = (shell.filter((m) => m.type === "ghost").at(-1) as any).ghost;
+    assert.equal(step.label, "Click New Event ⇥");
+
+    // Esc on a step stops working toward the goal.
+    b.fromShell({ type: "dismiss", ghostId: step.id });
+    assert.equal(hud().goal, undefined);
+});

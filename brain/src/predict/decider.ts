@@ -103,7 +103,7 @@ export class LocalDecider implements Decider {
     }
 
     private ctx(m: ModelInput): PredictContext {
-        return { now: Date.now(), active: m.active, recent: m.others.filter((s) => s !== m.active), history: m.history.slice(-50).map(toPast) };
+        return { now: Date.now(), active: m.active, recent: m.others.filter((s) => s !== m.active), history: m.history.slice(-50).map(toPast), ...(m.goal ? { goal: m.goal } : {}) };
     }
 
     private best(cands: Candidate[]): Action | null {
@@ -136,6 +136,11 @@ export class LocalDecider implements Decider {
         const modelCands = await this.model.predict(ctx, upstream.slice(0, 4), signal);
         const st = this.model.lastStats;
         this.lastStats = { fastMs, modelMs: performance.now() - t1, promptTokens: st?.promptTokens, cachedTokens: st?.cachedTokens };
+        // Working toward a rule's goal: the model's pick is the step, scored by the model alone (habits know nothing of the goal).
+        if (ctx.goal) {
+            const top = [...modelCands].sort((a, b) => b.score - a.score)[0];
+            return top ? { ...top.action, confidence: top.score, source: "model" } : null;
+        }
         return this.best([...upstream, ...modelCands]);
     }
 }

@@ -21,6 +21,7 @@ export interface PredictContext {
     active: ScreenState; // the screen the next action happens on
     recent: ScreenState[]; // other screens seen lately (other apps, other tabs), newest first
     history: PastStep[]; // oldest first
+    goal?: string; // a rule being carried out: the model picks steps toward it
 }
 
 export type Tier = "pattern" | "sequence" | "habit" | "fact" | "similar" | "model";

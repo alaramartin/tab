@@ -71,12 +71,17 @@ setInterval(async () => {
 }, 10 * 60_000).unref();
 
 const namer = new IconNamer();
+// The user's rules (HUD → Rules), checked by the local model, or by their words without it.
+const { RuleBook, LlamaRuleChecker, KeywordRuleChecker, DEFAULT_RULES_FILE } = await import("./rules.ts");
+const ruleServer = (decider as { server?: LlamaServer | null }).server;
+const rules = { book: new RuleBook(process.env.TAB_RULES_FILE || DEFAULT_RULES_FILE), checker: ruleServer ? new LlamaRuleChecker(ruleServer) : new KeywordRuleChecker() };
 let searchEmbedder: import("./memory/embed.ts").Embedder | null = null;
 const brain = new Brain({
     sendShell: (m) => out("shell", m),
     sendDetector: (m) => out("payments", m),
     decider,
     memory,
+    rules,
     searchMemory: memory
         ? async (query) => {
               const { searchEpisodes } = await import("./memory/episodes.ts");
