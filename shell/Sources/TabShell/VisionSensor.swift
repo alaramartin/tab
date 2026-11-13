@@ -113,7 +113,12 @@ enum VisionSensor {
         let t2 = CFAbsoluteTimeGetCurrent()
         var reqs: [IconLabeler.Request] = []
         let scale = Double(image.width) / frame.w
-        let found = objects(in: image, frame: frame, avoid: textRects)
+        var found = objects(in: image, frame: frame, avoid: textRects)
+        // Faint boxes (a light gray button on white) that the first pass can't see: kept only with text inside, where
+        // they make a word's element as big as the button it's on.
+        for r in faintShapes(in: image, frame: frame) where !found.shapes.contains(where: { overlap($0, r) > 0.8 }) {
+            if lines.contains(where: { l in inside(l.rect, r) }) { found.shapes.append(r) }
+        }
         func crop(_ r: Rect) -> CGImage? {
             image.cropping(to: CGRect(x: (r.x - frame.x) * scale, y: (r.y - frame.y) * scale, width: r.w * scale, height: r.h * scale).integral)
         }
@@ -126,7 +131,7 @@ enum VisionSensor {
         // box). One with several lines is named by all of them; one without is named like an icon.
         for r in found.shapes.prefix(max(0, maxEls - out.count)) {
             guard let c = crop(r) else { continue }
-            let inside = lines.filter { l in l.rect.x >= r.x - 2 && l.rect.y >= r.y - 2 && l.rect.x + l.rect.w <= r.x + r.w + 2 && l.rect.y + l.rect.h <= r.y + r.h + 2 }
+            let inside = lines.filter { l in VisionSensor.inside(l.rect, r) }
             let text = inside.map(\.text).joined(separator: " ")
             if inside.count == 1, let path = out[inside[0].at].path {
                 out[inside[0].at].rect = r
@@ -197,6 +202,58 @@ enum VisionSensor {
         // Biggest first when there are many (the board before its scraps), then in reading order.
         let big = shapes.sorted { $0.w * $0.h > $1.w * $1.h }.prefix(16).sorted { ($0.y, $0.x) < ($1.y, $1.x) }
         return (icons, Array(big))
+    }
+
+    /// `a` lies within `b` (2 pt of slack).
+    static func inside(_ a: Rect, _ b: Rect) -> Bool {
+        a.x >= b.x - 2 && a.y >= b.y - 2 && a.x + a.w <= b.x + b.w + 2 && a.y + a.h <= b.y + b.h + 2
+    }
+
+    /// Intersection over the smaller box's area.
+    static func overlap(_ a: Rect, _ b: Rect) -> Double {
+        let w = min(a.x + a.w, b.x + b.w) - max(a.x, b.x), h = min(a.y + a.h, b.y + b.h) - max(a.y, b.y)
+        guard w > 0, h > 0 else { return 0 }
+        return w * h / min(a.w * a.h, b.w * b.h)
+    }
+
+    /// Shapes only a little lighter or darker than the background. Vision's own contrast setting doesn't separate a
+    /// 0.9 box from 1.0 white, so threshold first: a gray thumbnail (≤ 512 px) where anything 0.04 or more from the
+    /// background's brightness (its most common gray) is black, then contours on that.
+    static func faintShapes(in image: CGImage, frame: Rect) -> [Rect] {
+        guard let bg = background(image) else { return [] }
+        let scale = min(1, 512 / Double(max(image.width, image.height)))
+        let w = max(1, Int(Double(image.width) * scale)), h = max(1, Int(Double(image.height) * scale))
+        var px = [UInt8](repeating: 0, count: w * h)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return [] }
+        ctx.interpolationQuality = .medium
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let b = Int((bg * 255).rounded())
+        for i in px.indices { px[i] = abs(Int(px[i]) - b) >= 10 ? 0 : 255 }
+        guard let mask = ctx.makeImage() else { return [] }
+        let req = VNDetectContoursRequest()
+        req.maximumImageDimension = 512
+        req.detectsDarkOnLight = true
+        guard (try? VNImageRequestHandler(cgImage: mask).perform([req])) != nil, let c = req.results?.first else { return [] }
+        var out: [Rect] = []
+        for k in c.topLevelContours.prefix(1500) {
+            let nb = k.normalizedPath.boundingBox
+            let r = Rect(x: frame.x + nb.minX * frame.w, y: frame.y + (1 - nb.maxY) * frame.h, w: nb.width * frame.w, h: nb.height * frame.h)
+            if min(r.w, r.h) >= 18, max(r.w, r.h) > 40, r.w <= frame.w * 0.6, r.h <= frame.h * 0.6, max(r.w / r.h, r.h / r.w) <= 8 { out.append(r) }
+        }
+        return Array(out.sorted { $0.w * $0.h > $1.w * $1.h }.prefix(24))
+    }
+
+    /// The background's brightness: the most common of 32 gray levels in a 64×64 thumbnail.
+    private static func background(_ img: CGImage) -> Double? {
+        let n = 64
+        var px = [UInt8](repeating: 0, count: n * n)
+        guard let ctx = CGContext(data: &px, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.interpolationQuality = .low
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: n, height: n))
+        var hist = [Int](repeating: 0, count: 32)
+        for p in px { hist[Int(p) / 8] += 1 }
+        let top = hist.indices.max { hist[$0] < hist[$1] }!
+        return (Double(top) * 8 + 4) / 255
     }
 
     /// Mean brightness, 0…1.

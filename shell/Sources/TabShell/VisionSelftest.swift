@@ -79,7 +79,7 @@ func runVisionSelftest() -> Never {
     check(reqs2.isEmpty, "nothing asked twice")
     check(VisionSensor.rect(for: named.first?.path ?? "") != nil, "a named icon can be clicked (its rect is known)")
 
-    // The canvas testbed's buttons (a word on a faint box): each is one element, never the word and its box twice.
+    // The canvas testbed's buttons (a word on a 0.9 gray box on white): each is one element, the size of its box.
     let cv = CanvasView(frame: NSRect(x: 0, y: 0, width: 520, height: 200))
     let rep = cv.bitmapImageRepForCachingDisplay(in: cv.bounds)!
     cv.cacheDisplay(in: cv.bounds, to: rep)
@@ -88,7 +88,11 @@ func runVisionSelftest() -> Never {
     for (i, b) in cv.buttons.enumerated() {
         let hits = cels.filter { $0.label == b }
         let f = cv.frame(of: i)
-        check(hits.count == 1 && hits[0].rect.x >= f.minX - 4 && hits[0].rect.x + hits[0].rect.w <= f.maxX + 4, "canvas testbed: one \(b), on its box (\(hits.count))")
+        check(hits.count == 1, "canvas testbed: one \(b) (\(hits.count))")
+        if let h = hits.first {
+            check(abs(h.rect.x - f.minX) <= 4 && abs(h.rect.y - f.minY) <= 4 && abs(h.rect.w - f.width) <= 4 && abs(h.rect.h - f.height) <= 4,
+                  "canvas testbed: \(b) spans its faint box (\(Int(h.rect.x)),\(Int(h.rect.y)) \(Int(h.rect.w))×\(Int(h.rect.h)))")
+        }
     }
 
     print(failures == 0 ? "vision selftest passed" : "vision selftest: \(failures) failed")
