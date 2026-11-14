@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { HubToShell, ScreenState } from "../../protocol/types.ts";
 import { Brain } from "../src/brain.ts";
 import type { Decider, ModelInput } from "../src/model.ts";
-import { KeywordRuleChecker, parseRule, RuleBook, type RuleChecker } from "../src/rules.ts";
+import { KeywordRuleChecker, parseRule, parseRules, RuleBook, type RuleChecker } from "../src/rules.ts";
 import { el } from "./screens.ts";
 
 test("rules split into a trigger, a goal and the app the goal names", () => {
@@ -17,21 +17,20 @@ test("rules split into a trigger, a goal and the app the goal names", () => {
     assert.deepEqual(parseRule("archive newsletters"), { trigger: "archive newsletters", goal: "Archive newsletters" });
 });
 
-test("the rule book keeps rules in a file you can edit by hand", () => {
+test("the hub reads rules from the file, and again when it changes", () => {
     const f = join(mkdtempSync(join(tmpdir(), "tab-rules-")), "rules.json");
-    const a = new RuleBook(f);
-    const r = a.add("  booking an event   adds it to Calendar ")!;
-    assert.equal(r.text, "booking an event adds it to Calendar");
-    assert.equal(a.add("Booking an event adds it to calendar"), null, "no duplicates");
-    a.add("after merging a PR, post in Slack");
-    a.setEnabled(r.id, false);
-    const b = new RuleBook(f);
-    assert.deepEqual(b.list().map((x) => [x.text, x.enabled]), [["booking an event adds it to Calendar", false], ["after merging a PR, post in Slack", true]]);
-    b.remove(r.id);
-    assert.equal(new RuleBook(f).list().length, 1);
+    const book = new RuleBook(f);
+    assert.deepEqual(book.list(), [], "no file yet: no rules");
+    writeFileSync(f, JSON.stringify({ rules: [{ id: "a", text: "booking an event adds it to Calendar", enabled: false, created: 1 }, { id: "b", text: "after merging a PR, post in Slack", enabled: true, created: 2 }] }));
+    assert.deepEqual(book.list().map((x) => [x.text, x.enabled]), [["booking an event adds it to Calendar", false], ["after merging a PR, post in Slack", true]]);
+    assert.deepEqual(book.enabled().map((x) => x.id), ["b"]);
     writeFileSync(f, JSON.stringify(["paying rent logs it in Numbers"]));
-    assert.equal(new RuleBook(f).enabled()[0].text, "paying rent logs it in Numbers", "a plain list of strings works too");
-    assert.ok(readFileSync(f, "utf8"));
+    utimesSync(f, new Date(), new Date(Date.now() + 5000)); // a different mtime, as a later save has
+    assert.deepEqual(book.list().map((x) => x.text), ["paying rent logs it in Numbers"], "a plain list of strings works too");
+    writeFileSync(f, "{ not json");
+    utimesSync(f, new Date(), new Date(Date.now() + 10000));
+    assert.equal(book.list().length, 1, "a broken file keeps the last good rules");
+    assert.deepEqual(parseRules({ rules: [{ text: "  " }, 3, { text: "ok" }] }).map((r) => r.text), ["ok"]);
 });
 
 const T = Date.now();
@@ -68,15 +67,13 @@ test("a matching rule is offered as a ghost; accepting it opens the app and the 
     b = new Brain({
         immediate: true,
         decider,
-        rules: { book: new RuleBook(null), checker },
+        rules: { book: new RuleBook([{ id: "r1", text: "booking an event adds it to Calendar", enabled: true, created: 0 }]), checker },
         sendShell: (m) => {
             shell.push(m);
             if (m.type === "exec") queueMicrotask(() => b.fromShell({ type: "exec_result", ghostId: m.ghostId, ok: true }));
         },
     });
-    b.fromShell({ type: "rule_add", text: "booking an event adds it to Calendar" });
     const hud = () => (shell.filter((m) => m.type === "hud").at(-1) as any).hud;
-    assert.deepEqual(hud().rules.map((r: any) => r.text), ["booking an event adds it to Calendar"]);
 
     b.fromShell({ type: "frontmost", app: "com.google.Chrome", window: "Booking confirmed" });
     b.fromShell(confirmed());

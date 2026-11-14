@@ -1,18 +1,47 @@
 // The menu bar dropdown: click Tab's icon for the goal being worked on (with Stop), the user's rules (add one, turn one
-// on or off, remove it) and Tab's commands (Pause, Search Memory, Forget the Last Hour, Quit).
+// on or off, remove it; saved to the rules file, hub or no hub) and Tab's commands (Pause, Search Memory, Forget the
+// Last Hour, Quit).
 // A dark card under the icon. It takes the keyboard while open, gives it back to the app that was in front when it
 // closes (a click outside, Esc, or a command), and Tab and Esc belong to it while it's open, not to a ghost.
 import AppKit
+import Combine
 import SwiftUI
 
-/// What the dropdown shows, kept current by the shell.
+/// What the dropdown shows. Rules are read from and written to the rules file here (RuleFile), hub or no hub.
 final class TabMenuModel: ObservableObject {
-    @Published var rules: [HudRule] = []
+    @Published var rules: [TabRule] = []
     @Published var goal: String?
     @Published var paused = false
     @Published var connected = false
-    /// A rule change or a goal stop, for the hub.
-    var send: ((ShellToHub) -> Void)?
+    /// Stop working toward the goal (the hub runs it).
+    var stopGoal: (() -> Void)?
+    /// Where rules are kept; tests and renders point it elsewhere.
+    var ruleFile: URL? = RuleFile.url
+
+    /// Read the rules file again (it may have been edited by hand).
+    func reloadRules() {
+        guard let f = ruleFile else { return }
+        let r = RuleFile.load(from: f)
+        if r != rules { rules = r }
+    }
+
+    private func saveRules(_ r: [TabRule]) {
+        rules = r
+        if let f = ruleFile { RuleFile.save(r, to: f) }
+    }
+
+    func addRule(_ text: String) {
+        reloadRules()
+        guard let t = RuleFile.cleaned(text, existing: rules) else { return }
+        saveRules(rules + [TabRule(id: RuleFile.newId(), text: t, enabled: true, created: (Date().timeIntervalSince1970 * 1000).rounded())])
+    }
+
+    func removeRule(_ id: String) { reloadRules(); saveRules(rules.filter { $0.id != id }) }
+
+    func toggleRule(_ id: String) {
+        reloadRules()
+        saveRules(rules.map { r in r.id == id ? TabRule(id: r.id, text: r.text, enabled: !r.enabled, created: r.created) : r })
+    }
     var onPause: (() -> Void)?
     var onSearch: (() -> Void)?
     var onForget: (() -> Void)?
@@ -46,7 +75,7 @@ struct TabMenuView: View {
                         .foregroundStyle(Palette.blueText)
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Stop") { model.send?(.goalClear) }
+                    Button("Stop") { model.stopGoal?() }
                         .buttonStyle(PillButton())
                 }
                 .padding(.horizontal, 14)
@@ -54,23 +83,22 @@ struct TabMenuView: View {
                 divider
             }
 
-            TextField(model.connected ? "Add a rule…" : "Start Tab's hub to add rules", text: $draft)
+            TextField("Add a rule…", text: $draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.primary)
                 .focused($fieldFocused)
                 .onSubmit {
                     let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !t.isEmpty { model.send?(.ruleAdd(t)) }
+                    if !t.isEmpty { model.addRule(t) }
                     draft = ""
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .disabled(!model.connected)
             divider
 
             if !model.connected {
-                Text("Tab's hub isn't running, so there are no suggestions and rules can't be changed. Start it with `npm start` in brain/, or `shell/scripts/setup.sh --agent` to start it at login.")
+                Text("Tab's hub isn't running, so nothing is suggested. Start it with `npm start` in brain/, or `shell/scripts/setup.sh --agent` to start it at login.")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.faint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -89,11 +117,9 @@ struct TabMenuView: View {
                 }
             } else {
                 VStack(spacing: 0) {
-                    ForEach(model.rules, id: \.id) { r in RuleRow(rule: r, send: { model.send?($0) }) }
+                    ForEach(model.rules) { r in RuleRow(rule: r, toggle: { model.toggleRule(r.id) }, remove: { model.removeRule(r.id) }) }
                 }
                 .padding(.vertical, 4)
-                .disabled(!model.connected)
-                .opacity(model.connected ? 1 : 0.6)
             }
 
             divider
@@ -108,7 +134,7 @@ struct TabMenuView: View {
         .frame(width: 300)
         .background(Palette.card)
         .environment(\.colorScheme, .dark)
-        .onAppear { fieldFocused = model.connected }
+        .onAppear { fieldFocused = true }
     }
 
     private var divider: some View { Palette.divider.frame(height: 1).padding(.horizontal, 14) }
@@ -116,13 +142,14 @@ struct TabMenuView: View {
 
 /// One rule: a dot that turns it on or off, its text, and × to remove it (shown on hover).
 private struct RuleRow: View {
-    let rule: HudRule
-    let send: (ShellToHub) -> Void
+    let rule: TabRule
+    let toggle: () -> Void
+    let remove: () -> Void
     @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Button { send(.ruleToggle(id: rule.id, enabled: !rule.enabled)) } label: {
+            Button(action: toggle) {
                 Circle()
                     .strokeBorder(rule.enabled ? Color.clear : Palette.secondary, lineWidth: 1.5)
                     .background(Circle().fill(rule.enabled ? Palette.blue : Color.clear))
@@ -136,7 +163,7 @@ private struct RuleRow: View {
                 .foregroundStyle(rule.enabled ? Palette.primary : Palette.faint)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button { send(.ruleRemove(rule.id)) } label: {
+            Button(action: remove) {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary)
             }
             .buttonStyle(.plain)
@@ -192,6 +219,7 @@ final class TabMenuPanel: NSPanel {
     private var clickMonitor: Any?
     private var keyMonitor: Any?
     private var previousApp: NSRunningApplication?
+    private var resize: AnyCancellable?
     var onOpenChange: ((Bool) -> Void)?
 
     init(model: TabMenuModel) {
@@ -223,6 +251,10 @@ final class TabMenuPanel: NSPanel {
             hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         contentView = container
+        // Grow and shrink with the rules (and the goal line) while open.
+        resize = model.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { if self?.isVisible == true { self?.layoutToFit() } }
+        }
     }
 
     override var canBecomeKey: Bool { true }
@@ -286,14 +318,15 @@ final class TabMenuPanel: NSPanel {
 
     /// `TabShell --render-menu out.png`: the dropdown in a few states, drawn offscreen.
     static func render(to out: String) {
-        let rules = [HudRule(id: "a", text: "booking an event adds it to Calendar", enabled: true),
-                     HudRule(id: "b", text: "after merging a PR, post the link in the team channel on Slack", enabled: true),
-                     HudRule(id: "c", text: "saving a receipt files it in Finder", enabled: false)]
+        let rules = [TabRule(id: "a", text: "booking an event adds it to Calendar", enabled: true, created: 0),
+                     TabRule(id: "b", text: "after merging a PR, post the link in the team channel on Slack", enabled: true, created: 0),
+                     TabRule(id: "c", text: "saving a receipt files it in Finder", enabled: false, created: 0)]
+        func model(_ f: (TabMenuModel) -> Void) -> TabMenuModel { let m = TabMenuModel(); m.ruleFile = nil; f(m); return m }
         let states: [TabMenuModel] = [
-            { let m = TabMenuModel(); m.connected = true; return m }(),
-            { let m = TabMenuModel(); m.connected = true; m.rules = rules; return m }(),
-            { let m = TabMenuModel(); m.connected = true; m.rules = rules; m.goal = "Add Night Owls · Fri 9pm to Calendar"; m.paused = true; return m }(),
-            { let m = TabMenuModel(); m.connected = false; m.rules = rules; return m }(),
+            model { $0.connected = true },
+            model { $0.connected = true; $0.rules = rules },
+            model { $0.connected = true; $0.rules = rules; $0.goal = "Add Night Owls · Fri 9pm to Calendar"; $0.paused = true },
+            model { $0.connected = false; $0.rules = rules },
         ]
         let views = states.map { m -> NSView in
             let h = NSHostingView(rootView: TabMenuView(model: m))

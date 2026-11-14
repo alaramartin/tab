@@ -109,16 +109,9 @@ export interface Hud {
     tabDid: { clicks: number; keys: number }; // what Tab executed for the user
     youDid: number; // every real user input, including Tab/Esc presses
     lastTx?: { hash: string; explorerUrl: string; amountUsd: string };
-    rules?: HudRule[]; // the user's rules, for the menu bar dropdown
     goal?: string; // a rule being carried out: what the ghosts are working toward
 }
 
-/** A rule as the menu bar dropdown lists it: what the user wrote, and whether it's on. */
-export interface HudRule {
-    id: string;
-    text: string;
-    enabled: boolean;
-}
 
 // ---- TabShell → hub ----
 export type ShellToHub =
@@ -130,9 +123,6 @@ export type ShellToHub =
     | { type: "paused"; paused: boolean } // menu bar → Pause Tab
     | { type: "forget"; sinceMs: number } // menu bar → Forget the Last Hour
     | { type: "memory_search"; query: string } // menu bar → Search Memory
-    | { type: "rule_add"; text: string } // menu bar dropdown → rules
-    | { type: "rule_remove"; id: string }
-    | { type: "rule_toggle"; id: string; enabled: boolean }
     | { type: "goal_clear" } // menu bar dropdown → Stop working toward a rule's goal
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }

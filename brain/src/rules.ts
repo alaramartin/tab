@@ -4,10 +4,11 @@
 // what they just did. A match is offered as a ghost (`Add Night Owls · Fri 9pm to Calendar ⇥`). Accepting it
 // opens the app and makes the goal the model's aim, so the next ghosts walk toward it one Tab at a time.
 //
-// Rules live in ~/.tab/rules.json (TAB_RULES_FILE overrides it), so they can also be edited by hand.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// Rules live in ~/.tab/rules.json (TAB_RULES_FILE overrides it). The menu bar dropdown writes it, the hub reads it, and
+// it can be edited by hand.
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { ScreenState } from "../../protocol/types.ts";
 import { appName, historyLines, screenLines } from "./predict/generic.ts";
 import type { PastStep } from "./predict/types.ts";
@@ -60,78 +61,60 @@ export function parseRule(text: string): ParsedRule {
     return { trigger: trigger.trim(), goal: goal.trim(), ...(app ? { app: app[0].toUpperCase() + app.slice(1) } : {}) };
 }
 
+/** Rules from the file's JSON: {"rules": [{id, text, enabled}]}, or a plain list of strings. Junk is skipped. */
+export function parseRules(raw: unknown): Rule[] {
+    const list: unknown[] = Array.isArray(raw) ? raw : Array.isArray((raw as { rules?: unknown })?.rules) ? (raw as { rules: unknown[] }).rules : [];
+    const out: Rule[] = [];
+    list.forEach((r, i) => {
+        const x = r as Partial<Rule> | string;
+        const text = typeof x === "string" ? x : x?.text;
+        if (typeof text !== "string" || !text.trim()) return;
+        out.push({
+            id: typeof x === "object" && x.id ? String(x.id) : `r${i}`,
+            text: text.trim().slice(0, MAX_TEXT),
+            enabled: typeof x === "object" ? x.enabled !== false : true,
+            created: typeof x === "object" && typeof x.created === "number" ? x.created : 0,
+        });
+    });
+    return out.slice(0, MAX_RULES);
+}
+
+/**
+ * The user's rules, read from the rules file. The menu bar dropdown writes the file (rules are settings, editable
+ * whether or not the hub runs); the hub only reads it, again whenever it changes.
+ */
 export class RuleBook {
     private rules: Rule[] = [];
-    private seq = 0;
+    private mtime = -1;
 
-    /** `file` null keeps rules in memory only (tests). */
-    constructor(private file: string | null = DEFAULT_RULES_FILE) {
-        if (file && existsSync(file)) {
-            try {
-                const raw = JSON.parse(readFileSync(file, "utf8"));
-                const list: unknown[] = Array.isArray(raw) ? raw : Array.isArray(raw?.rules) ? raw.rules : [];
-                for (const r of list) {
-                    const x = r as Partial<Rule> | string;
-                    const text = typeof x === "string" ? x : x?.text;
-                    if (typeof text !== "string" || !text.trim()) continue;
-                    this.rules.push({
-                        id: typeof x === "object" && x.id ? String(x.id) : this.nextId(),
-                        text: text.trim().slice(0, MAX_TEXT),
-                        enabled: typeof x === "object" ? x.enabled !== false : true,
-                        created: typeof x === "object" && typeof x.created === "number" ? x.created : Date.now(),
-                    });
-                }
-            } catch (err) {
-                console.error(`[rules] ${file}: ${(err as Error).message}`);
-            }
+    /** A file to read, or a fixed list (tests). */
+    constructor(private source: string | Rule[] = DEFAULT_RULES_FILE) {
+        if (Array.isArray(source)) this.rules = source;
+    }
+
+    private refresh(): void {
+        if (typeof this.source !== "string") return;
+        let m = 0;
+        try {
+            m = existsSync(this.source) ? statSync(this.source).mtimeMs : 0;
+        } catch {}
+        if (m === this.mtime) return;
+        this.mtime = m;
+        if (!m) return void (this.rules = []);
+        try {
+            this.rules = parseRules(JSON.parse(readFileSync(this.source, "utf8")));
+        } catch (err) {
+            console.error(`[rules] ${this.source}: ${(err as Error).message}`); // keep the last good rules
         }
     }
 
-    private nextId(): string {
-        return `r${Date.now().toString(36)}${(this.seq++).toString(36)}`;
-    }
-
     list(): Rule[] {
+        this.refresh();
         return this.rules.map((r) => ({ ...r }));
     }
 
     enabled(): Rule[] {
-        return this.rules.filter((r) => r.enabled);
-    }
-
-    add(text: string): Rule | null {
-        const t = text.trim().replace(/\s+/g, " ").slice(0, MAX_TEXT);
-        if (!t || this.rules.length >= MAX_RULES || this.rules.some((r) => r.text.toLowerCase() === t.toLowerCase())) return null;
-        const r: Rule = { id: this.nextId(), text: t, enabled: true, created: Date.now() };
-        this.rules.push(r);
-        this.save();
-        return r;
-    }
-
-    remove(id: string): boolean {
-        const n = this.rules.length;
-        this.rules = this.rules.filter((r) => r.id !== id);
-        if (this.rules.length === n) return false;
-        this.save();
-        return true;
-    }
-
-    setEnabled(id: string, on: boolean): boolean {
-        const r = this.rules.find((x) => x.id === id);
-        if (!r || r.enabled === on) return false;
-        r.enabled = on;
-        this.save();
-        return true;
-    }
-
-    private save(): void {
-        if (!this.file) return;
-        try {
-            mkdirSync(dirname(this.file), { recursive: true });
-            writeFileSync(this.file, JSON.stringify({ rules: this.rules }, null, 2) + "\n");
-        } catch (err) {
-            console.error(`[rules] save: ${(err as Error).message}`);
-        }
+        return this.list().filter((r) => r.enabled);
     }
 }
 

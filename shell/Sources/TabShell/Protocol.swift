@@ -115,15 +115,7 @@ struct Hud: Codable, Equatable {
     var accepted: Int?
     var tabDid: TabDid?
     var youDid: Int?
-    var rules: [HudRule]?
     var goal: String?
-}
-
-/// A rule the user wrote in the menu bar dropdown ("booking an event adds it to Calendar").
-struct HudRule: Codable, Equatable {
-    var id: String
-    var text: String
-    var enabled: Bool
 }
 
 struct IconLabel: Codable { var hash: String; var label: String }
@@ -167,16 +159,13 @@ enum ShellToHub: Encodable {
     case paused(Bool)
     case forget(sinceMs: Double)
     case memorySearch(String)
-    case ruleAdd(String)
-    case ruleRemove(String)
-    case ruleToggle(id: String, enabled: Bool)
     case goalClear
     case input(kind: String) // "key" | "click"
     case accept(ghostId: String)
     case dismiss(ghostId: String)
     case execResult(ghostId: String, ok: Bool, error: String?)
 
-    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items, paused, sinceMs, query, text, id, enabled }
+    private enum K: String, CodingKey { case type, role, app, window, kind, ghostId, ok, error, item, items, paused, sinceMs, query }
 
     func encode(to encoder: Encoder) throws {
         if case .state(let s) = self { return try s.encode(to: encoder) }
@@ -197,16 +186,6 @@ enum ShellToHub: Encodable {
         case .forget(let ms):
             try c.encode("forget", forKey: .type)
             try c.encode(ms, forKey: .sinceMs)
-        case .ruleAdd(let t):
-            try c.encode("rule_add", forKey: .type)
-            try c.encode(t, forKey: .text)
-        case .ruleRemove(let id):
-            try c.encode("rule_remove", forKey: .type)
-            try c.encode(id, forKey: .id)
-        case .ruleToggle(let id, let on):
-            try c.encode("rule_toggle", forKey: .type)
-            try c.encode(id, forKey: .id)
-            try c.encode(on, forKey: .enabled)
         case .goalClear:
             try c.encode("goal_clear", forKey: .type)
         case .memorySearch(let q):

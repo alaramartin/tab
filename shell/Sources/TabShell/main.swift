@@ -120,10 +120,7 @@ final class Shell: NSObject, InputTapDelegate {
         overlay = Overlay(highContrast: highContrast)
         hub = HubClient(url: hubURL)
         super.init()
-        menu.send = { [weak self] m in
-            guard let self else { return }
-            if self.hubConnected { self.hub.send(m) } else { log("menu: hub not connected, rule change not sent") }
-        }
+        menu.stopGoal = { [weak self] in self?.hub.send(.goalClear) }
         menu.onPause = { [weak self] in self?.togglePause() }
         menu.onSearch = { [weak self] in self?.openMemorySearch() }
         menu.onForget = { [weak self] in self?.forgetHour(); self?.menuPanel.close() }
@@ -178,6 +175,7 @@ final class Shell: NSObject, InputTapDelegate {
     @objc private func menuClicked() {
         if menuPanel.isVisible { return menuPanel.close() }
         guard let b = statusItem?.button, let w = b.window else { return }
+        menu.reloadRules()
         menuPanel.show(below: w.convertToScreen(b.convert(b.bounds, to: nil)))
     }
 
@@ -243,9 +241,7 @@ final class Shell: NSObject, InputTapDelegate {
             log("icons named: \(items.map { $0.label.isEmpty ? "?" : $0.label }.joined(separator: ", "))")
             ax.invalidate()
         case .hud(let h):
-            if menu.rules != (h.rules ?? []) { menu.rules = h.rules ?? [] }
             if menu.goal != h.goal { menu.goal = h.goal }
-            if menuPanel.isVisible { DispatchQueue.main.async { self.menuPanel.layoutToFit() } }
         case .exec(let ghostId, let action):
             exec(ghostId, action)
         case .memoryResults(let query, let results):

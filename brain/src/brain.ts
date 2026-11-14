@@ -89,12 +89,6 @@ export class Brain {
 
     constructor(private o: BrainOpts) {
         this.pattern = new PatternEngine(o.memory ?? null);
-        this.syncRules();
-    }
-
-    private syncRules(): void {
-        const list = this.o.rules?.book.list();
-        if (list) this.hud.rules = list.map(({ id, text, enabled }) => ({ id, text, enabled }));
     }
 
     private setGoal(g: Brain["goal"]): void {
@@ -163,18 +157,6 @@ export class Brain {
                 else this.o.searchMemory(query).then(reply, (err) => (console.error("[memory] search:", (err as Error).message), reply([])));
                 break;
             }
-            case "rule_add":
-                if (this.o.rules?.book.add(String(m.text ?? ""))) this.syncRules();
-                this.sendHud();
-                break;
-            case "rule_remove":
-                if (this.o.rules?.book.remove(String(m.id))) this.syncRules();
-                this.sendHud();
-                break;
-            case "rule_toggle":
-                if (this.o.rules?.book.setEnabled(String(m.id), !!m.enabled)) this.syncRules();
-                this.sendHud();
-                break;
             case "goal_clear":
                 this.setGoal(null);
                 this.hide();
