@@ -1,5 +1,5 @@
 // The HUD: a small non-activating panel in the top right. Clicking it never steals focus.
-// Compact: what Tab is doing, the last payment, and the Rules row. Click the top row for the Tab did / You did
+// Compact: what Tab is doing, and the Rules row. Click the top row for the Tab did / You did
 // breakdown; click Rules for the user's rules (turn one on or off, remove it, or type a new one). Only the rule text
 // field takes the keyboard, and it gives it back to the app in front after Return or Esc.
 import AppKit
@@ -221,10 +221,8 @@ final class HUDView: NSView, NSTextFieldDelegate {
         static let padH: CGFloat = 16
         static let statusY: CGFloat = 10, statusH: CGFloat = 22 // mode dot, what Tab is doing, Tab did N ▸
         static let div1Y: CGFloat = 41
-        static let paidY: CGFloat = 50, paidH: CGFloat = 22     // last payment + ledger
-        static let div2Y: CGFloat = 81
-        static let ruleY: CGFloat = 90, ruleH: CGFloat = 22     // Rules (or the goal in progress) ▸
-        static let compact: CGFloat = 122                        // the collapsed card ends here
+        static let ruleY: CGFloat = 50, ruleH: CGFloat = 22     // Rules (or the goal in progress) ▸
+        static let compact: CGFloat = 82                         // the collapsed card ends here
         // The rules list, below the breakdown if that's open (offsets from its own top):
         static let listY: CGFloat = 8, rowH: CGFloat = 26       // one rule per row
         static let fieldH: CGFloat = 24                          // the new-rule text field, after the rows
@@ -239,10 +237,6 @@ final class HUDView: NSView, NSTextFieldDelegate {
 
     var hud = Hud() {
         didSet {
-            // Flash only for a payment that happens while we watch: the first hud after a (re)connect
-            // carries the old tx, and a hub restart must not read as a new payment.
-            if seenHud, let tx = hud.lastTx, tx != oldValue.lastTx { markPaid() }
-            seenHud = true
             updateDot()
             retargetCounters()
             if hud.rules != oldValue.rules { placeField() }
@@ -251,11 +245,6 @@ final class HUDView: NSView, NSTextFieldDelegate {
     }
     var connected = false {
         didSet {
-            // A new connection starts fresh: no flash carried over, and its first hud only sets the baseline.
-            if connected != oldValue {
-                seenHud = false
-                paidUntil = nil
-            }
             updateDot()
             needsDisplay = true
         }
@@ -283,11 +272,8 @@ final class HUDView: NSView, NSTextFieldDelegate {
     private var lb: CGRect { CGRect(x: 0, y: 0, width: bounds.width / drawScale, height: bounds.height / drawScale) }
     private func dirty(_ r: CGRect) { if drawScale == 1 { setNeedsDisplay(r) } else { needsDisplay = true } }
 
-    private var seenHud = false
-    private var paidUntil: Date?
     private var dragStart: (mouse: NSPoint, origin: NSPoint)?
     private var dragged = false
-    private var ledgerRect: CGRect = .zero
     private var dotAlpha: CGFloat = 1
     private var pulse: Timer?
 
@@ -302,7 +288,6 @@ final class HUDView: NSView, NSTextFieldDelegate {
     private let tabBlue = hex(0x0A84FF)
     private let tabBlueText = hex(0x409CFF) // the same blue, lifted for 11 pt text on the dark card
     private let youWhite = NSColor.white.withAlphaComponent(0.85)
-    private let paidGreen = hex(0x30D158)
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -392,11 +377,6 @@ final class HUDView: NSView, NSTextFieldDelegate {
             pulse = nil
             dotAlpha = 1
         }
-    }
-
-    private func markPaid() {
-        paidUntil = Date().addingTimeInterval(3)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.05) { [weak self] in self?.needsDisplay = true }
     }
 
     /// Tab did / You did count up to a new value (350 ms, ease-out). Decreases (a hub restart), reduced motion,
@@ -523,9 +503,6 @@ final class HUDView: NSView, NSTextFieldDelegate {
         }
         NSColor.white.withAlphaComponent(0.10).setFill()
         CGRect(x: L.padH, y: L.div1Y, width: lb.width - 2 * L.padH, height: 1).fill()
-        drawPaid()
-        NSColor.white.withAlphaComponent(0.10).setFill()
-        CGRect(x: L.padH, y: L.div2Y, width: lb.width - 2 * L.padH, height: 1).fill()
         drawRuleRow()
         if expanded {
             NSColor.white.withAlphaComponent(0.10).setFill()
@@ -631,7 +608,7 @@ final class HUDView: NSView, NSTextFieldDelegate {
         let x0 = L.padH, x1 = lb.width - L.padH
         let f = NSFont.systemFont(ofSize: 12, weight: .medium)
         let base = centred(L.ruleY, L.ruleH, f)
-        ruleRowRect = CGRect(x: 0, y: L.div2Y + 1, width: lb.width, height: L.compact - L.div2Y - 1)
+        ruleRowRect = CGRect(x: 0, y: L.div1Y + 1, width: lb.width, height: L.compact - L.div1Y - 1)
         let chevron = run(rulesOpen ? "▾" : "▸", .systemFont(ofSize: 11, weight: .semibold), secondary)
         drawRight(chevron, right: x1, base: base)
         var right = x1 - width(chevron) - 6
@@ -678,36 +655,9 @@ final class HUDView: NSView, NSTextFieldDelegate {
         }
     }
 
-    /// Last payment and the ledger button. Green with a check for 3 s after a payment we saw happen.
-    private func drawPaid() {
-        let x0 = L.padH, x1 = lb.width - L.padH
-        let bf = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        let hasTx = hud.lastTx != nil
-        let fresh = hasTx && (paidUntil ?? .distantPast) > Date()
-        let bt = run("ledger ↗", bf, fresh ? paidGreen : hasTx ? primary : disabled)
-        ledgerRect = CGRect(x: x1 - width(bt) - 16, y: L.paidY + 1, width: width(bt) + 16, height: L.paidH - 2)
-        let fill = fresh ? paidGreen.withAlphaComponent(0.20) : NSColor.white.withAlphaComponent(hasTx ? 0.12 : 0.05)
-        fill.setFill()
-        NSBezierPath(roundedRect: ledgerRect, xRadius: 6, yRadius: 6).fill()
-        let base = centred(L.paidY, L.paidH, bf)
-        draw(bt, x: ledgerRect.minX + 8, base: base)
-
-        let maxW = ledgerRect.minX - 8 - x0
-        guard let tx = hud.lastTx else {
-            return draw(run("no payments yet", .systemFont(ofSize: 11), disabled), x: x0, base: base)
-        }
-        let short = tx.hash.count > 12 ? "\(tx.hash.prefix(6))…\(tx.hash.suffix(4))" : tx.hash
-        let line = join([
-            run(fresh ? "✓ Paid " : "Paid ", .systemFont(ofSize: 11, weight: fresh ? .semibold : .medium), fresh ? paidGreen : primary),
-            run("$\(tx.amountUsd)", mono(11, .semibold), fresh ? paidGreen : primary),
-            run(" · \(short)", mono(11, .regular), fresh ? paidGreen.withAlphaComponent(0.85) : secondary),
-        ])
-        draw(line, x: x0, base: base, maxW: maxW)
-    }
-
     // MARK: mouse
 
-    // Drag anywhere to move the panel; a click that moves less than 6 pt still hits the top row or the ledger.
+    // Drag anywhere to move the panel; a click that moves less than 6 pt still hits what's under it.
     override func mouseDown(with e: NSEvent) {
         guard let w = window else { return }
         dragStart = (NSEvent.mouseLocation, w.frame.origin)
@@ -732,8 +682,6 @@ final class HUDView: NSView, NSTextFieldDelegate {
         let p = CGPoint(x: q.x / drawScale, y: q.y / drawScale)
         if p.y < L.div1Y {
             onToggle?() // the top row opens and closes the breakdown
-        } else if ledgerRect.contains(p) {
-            if hud.lastTx != nil { onClick?("ledger") }
         } else if goalStopRect.contains(p) {
             onRule?(.goalClear)
         } else if ruleRowRect.contains(p) {

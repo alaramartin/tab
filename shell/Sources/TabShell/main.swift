@@ -334,8 +334,6 @@ final class Shell: NSObject, InputTapDelegate {
             hud.setHighContrast(overlay.highContrast)
             overlay.redraw()
             refreshMenu()
-        case "ledger":
-            if let u = lastHud.lastTx.flatMap({ URL(string: $0.explorerUrl) }) { NSWorkspace.shared.open(u) }
         default:
             break
         }
@@ -529,30 +527,26 @@ func renderSelftest(to out: String) {
 func renderHUD(to out: String) {
     let rules = [HudRule(id: "a", text: "booking an event adds it to Calendar", enabled: true),
                  HudRule(id: "b", text: "after merging a PR, post the link in the team channel on Slack", enabled: true),
-                 HudRule(id: "c", text: "paying rent logs it in Numbers", enabled: false)]
-    let tx = LastTx(hash: "0x8f3a91c2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
-                    explorerUrl: "https://sepolia.basescan.org/tx/0x8f3a", amountUsd: "0.30")
-    // (name, connected, high contrast, hud before, hud). A tx that appears between `before` and `hud` is a payment
-    // seen live, so it flashes green; one already there on the first hud after connecting does not.
+                 HudRule(id: "c", text: "saving a receipt files it in Finder", enabled: false)]
+    // (name, connected, high contrast, hud before, hud)
     let states: [(String, Bool, Bool, Hud?, Hud)] = [
         ("offline, stale numbers", false, false, nil,
          Hud(mode: "shown", lastSource: "model", lastLatencyMs: 212, modelCalls: 3, shown: 4, accepted: 3, tabDid: TabDid(clicks: 9, keys: 14), youDid: 9)),
         ("idle, fresh start", true, false, nil, Hud(mode: "idle", modelCalls: 0, shown: 0, accepted: 0, tabDid: TabDid(clicks: 0, keys: 0), youDid: 0)),
         ("predicting", true, false, nil, Hud(mode: "predicting", lastSource: "model", lastLatencyMs: 212, modelCalls: 3, shown: 3, accepted: 2,
                                              tabDid: TabDid(clicks: 3, keys: 0), youDid: 5)),
-        ("just paid", true, false,
+        ("just accepted", true, false,
          Hud(mode: "running", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 2, keys: 0), youDid: 6),
-         Hud(mode: "shown", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 3, keys: 0), youDid: 7, lastTx: tx)),
+         Hud(mode: "shown", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 3, keys: 0), youDid: 7)),
         ("a repeat", true, false, nil,
-         Hud(mode: "shown", lastSource: "pattern", lastLatencyMs: 2, modelCalls: 6, shown: 8, accepted: 7, tabDid: TabDid(clicks: 9, keys: 131), youDid: 61, lastTx: tx)),
+         Hud(mode: "shown", lastSource: "pattern", lastLatencyMs: 2, modelCalls: 6, shown: 8, accepted: 7, tabDid: TabDid(clicks: 9, keys: 131), youDid: 61)),
         ("running, <1 ms", true, false, nil,
-         Hud(mode: "running", lastSource: "pattern", lastLatencyMs: 0, modelCalls: 6, shown: 9, accepted: 8, tabDid: TabDid(clicks: 14, keys: 150), youDid: 64, lastTx: tx)),
+         Hud(mode: "running", lastSource: "pattern", lastLatencyMs: 0, modelCalls: 6, shown: 9, accepted: 8, tabDid: TabDid(clicks: 14, keys: 150), youDid: 64)),
         ("high contrast", true, true, nil,
-         Hud(mode: "idle", lastSource: "model", lastLatencyMs: 640, modelCalls: 9, shown: 16, accepted: 15, tabDid: TabDid(clicks: 31, keys: 168), youDid: 72,
-             lastTx: LastTx(hash: tx.hash, explorerUrl: tx.explorerUrl, amountUsd: "0.05"))),
+         Hud(mode: "idle", lastSource: "model", lastLatencyMs: 640, modelCalls: 9, shown: 16, accepted: 15, tabDid: TabDid(clicks: 31, keys: 168), youDid: 72)),
         ("stress", true, false, nil,
          Hud(mode: "predicting", lastSource: "pattern", lastLatencyMs: 1234, modelCalls: 99, shown: 99, accepted: 99, tabDid: TabDid(clicks: 480, keys: 754),
-             youDid: 9999, lastTx: LastTx(hash: tx.hash, explorerUrl: tx.explorerUrl, amountUsd: "1234.56"))),
+             youDid: 9999)),
         ("rules open", true, false, nil,
          Hud(mode: "idle", modelCalls: 2, shown: 3, accepted: 2, tabDid: TabDid(clicks: 3, keys: 12), youDid: 20, rules: rules)),
         ("a rule in progress", true, false, nil,

@@ -10,7 +10,7 @@ This file records how Tab was planned and built. It has five parts: what's still
 
 Items marked *(needs you)* need a decision or the Mac to yourself. The rest a session can do alone.
 
-1. **Design the HUD.** *(needs you)* It's a placeholder: status, last payment, and an expandable Tab did / You did (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
+1. **Design the HUD.** *(needs you)* It's a placeholder: status, an expandable Tab did / You did, and Rules (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
 2. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
 3. **Try rules on real tasks.** *(needs you)* Rules (HUD → Rules) have only run in unit tests and offscreen renders. Write two or three, do the tasks they describe, and check that the Yes/No trigger check fires at the right moments (`MATCH_AT` 0.7 in `brain/src/rules.ts`) and that goal-guided ghosts (shown from 0.4) can finish a goal in the named app. Typing in the HUD's rule field should hand the keyboard back to the app in front after Return or Esc.
 
@@ -162,7 +162,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 13. **Nov 12.** All three end-to-end suites passed on the Mac: `npm run e2e` (recording, acting, habit, form-fill, completion and row-numbering ghosts, with live value patches and subtree re-walks), `npm run e2e:chores` (taught once, repeated twice, the remaining two, then recalled for the whole list), and `npm run e2e:canvas` (OCR clicks, a ghost on a drawn button, icons named by vision).
     - Faint canvas shapes: a second pass thresholds a gray thumbnail at 0.04 from the background's most common gray and takes contours of that, since Vision's contrast setting didn't separate a 0.9 box from white. A faint shape counts only with text inside it, where it grows that word's element to the button's size. `--vision-selftest` checks the canvas testbed's buttons span their boxes; `npm run e2e:canvas` still passes.
 
-14. **Nov 13.** Payments became a stretch goal (section 1). Tab stays out of them instead: nothing on card forms except the way to checkout, and never a click that spends money.
+14. **Nov 13.** Payments became a stretch goal (section 1). Tab stays out of them instead: nothing on card forms except the way to checkout, and never a click that spends money. The HUD's last-payment row and ledger button went with them.
 
 ### How we worked
 

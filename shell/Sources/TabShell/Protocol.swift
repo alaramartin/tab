@@ -104,12 +104,6 @@ struct TabDid: Codable, Equatable {
     var keys: Int
 }
 
-struct LastTx: Codable, Equatable {
-    var hash: String
-    var explorerUrl: String
-    var amountUsd: String
-}
-
 /// Every field optional so a partial hud from the hub still renders.
 struct Hud: Codable, Equatable {
     var mode: String?
@@ -120,7 +114,6 @@ struct Hud: Codable, Equatable {
     var accepted: Int?
     var tabDid: TabDid?
     var youDid: Int?
-    var lastTx: LastTx?
     var rules: [HudRule]?
     var goal: String?
 }
