@@ -7,7 +7,7 @@ import type { Action, El, ScreenState } from "../../../protocol/types.ts";
 import type { HistEntry } from "../history.ts";
 import { HabitModel } from "../memory/habits.ts";
 import { Embedder } from "../memory/embed.ts";
-import { FactIndex } from "../memory/facts.ts";
+import { FactIndex, valueFits } from "../memory/facts.ts";
 import { SimilarMoments } from "../memory/similar.ts";
 import type { Memory } from "../memory/store.ts";
 import type { Decider, ModelInput } from "../model.ts";
@@ -23,6 +23,16 @@ export function toPast(h: HistEntry): PastStep {
         ? { id: t.id, path: t.path, role: t.role, label: t.label, list: t.list, section: t.section, axId: t.axId, grid: t.grid, placeholder: t.placeholder, rect: { x: 0, y: 0, w: 0, h: 0 }, enabled: true }
         : undefined;
     return { ts: h.ts, app: h.app, url: h.url, window: h.window, op: h.op, by: h.by, target, value: h.value, prov: h.prov };
+}
+
+/** Drop typing a value into a field it can't belong in: an email into "Number", a URL into "Phone". */
+export function fitting(cands: Candidate[], ctx: PredictContext): Candidate[] {
+    return cands.filter((c) => {
+        const a = c.action;
+        if (a.op !== "type" || !a.value) return true;
+        const el = ctx.active.elements.find((e) => e.id === a.targetId || (a.targetPath && e.path === a.targetPath));
+        return !el || valueFits(el, a.value);
+    });
 }
 
 export class LocalDecider implements Decider {
@@ -106,8 +116,8 @@ export class LocalDecider implements Decider {
         return { now: Date.now(), active: m.active, recent: m.others.filter((s) => s !== m.active), history: m.history.slice(-50).map(toPast), ...(m.goal ? { goal: m.goal } : {}) };
     }
 
-    private best(cands: Candidate[]): Action | null {
-        const top = this.ladder.merge(cands)[0];
+    private best(cands: Candidate[], ctx?: PredictContext): Action | null {
+        const top = this.ladder.merge(ctx ? fitting(cands, ctx) : cands)[0];
         if (!top) return null;
         const source: Action["source"] = top.tiers.includes("model") ? "model" : "pattern";
         return { ...top.action, confidence: top.score, source };
@@ -121,7 +131,7 @@ export class LocalDecider implements Decider {
     fast(m: ModelInput): Action | null {
         const t0 = performance.now();
         const ctx = this.ctx(m);
-        const a = this.best(this.fastCands(ctx));
+        const a = this.best(this.fastCands(ctx), ctx);
         this.lastStats = { fastMs: performance.now() - t0 };
         return a;
     }
@@ -131,16 +141,21 @@ export class LocalDecider implements Decider {
         const t0 = performance.now();
         const upstream = this.fastCands(ctx).sort((a, b) => b.score - a.score);
         const fastMs = performance.now() - t0;
-        if (!this.model) return this.best(upstream);
+        if (!this.model) return this.best(upstream, ctx);
         const t1 = performance.now();
         const modelCands = await this.model.predict(ctx, upstream.slice(0, 4), signal);
         const st = this.model.lastStats;
         this.lastStats = { fastMs, modelMs: performance.now() - t1, promptTokens: st?.promptTokens, cachedTokens: st?.cachedTokens };
-        // Working toward a rule's goal: the model's pick is the step, scored by the model alone (habits know nothing of the goal).
+        // Working toward a rule's goal: the model's pick is the step, scored by the model alone (habits know nothing of the
+        // goal). When it says none or isn't sure, an empty field on screen that field facts can fill is still a step: a
+        // goal like "copy my details into the Sign up form" isn't done while one is left.
         if (ctx.goal) {
-            const top = [...modelCands].sort((a, b) => b.score - a.score)[0];
+            const top = fitting([...modelCands].sort((a, b) => b.score - a.score), ctx)[0];
+            if (top && top.score >= 0.4) return { ...top.action, confidence: top.score, source: "model" };
+            const fill = fitting(upstream.filter((c) => c.tier === "fact" && c.action.op === "type"), ctx).sort((a, b) => b.score - a.score)[0];
+            if (fill) return { ...fill.action, confidence: Math.max(fill.score, 0.5), source: "pattern" };
             return top ? { ...top.action, confidence: top.score, source: "model" } : null;
         }
-        return this.best([...upstream, ...modelCands]);
+        return this.best([...upstream, ...modelCands], ctx);
     }
 }

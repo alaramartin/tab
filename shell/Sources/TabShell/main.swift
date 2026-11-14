@@ -281,9 +281,16 @@ final class Shell: NSObject, InputTapDelegate {
             }
             bid = found
         }
+        let window = a.window
         AppSwitcher.activate(bid) { [weak self] ok, err in
-            log("exec \(ghostId): switch_app \(bid) → \(ok ? "ok" : err ?? "failed")")
-            self?.hub.send(.execResult(ghostId: ghostId, ok: ok, error: err))
+            log("exec \(ghostId): switch_app \(bid)\(window.map { " · window \"\($0)\"" } ?? "") → \(ok ? "ok" : err ?? "failed")")
+            guard ok, let window, let app = runningApp(bid) else { self?.hub.send(.execResult(ghostId: ghostId, ok: ok, error: err)); return }
+            // A window of the app by its title (a goal's "Sign up" form): bring it to the front too.
+            self?.ax.async {
+                let raised = AppSwitcher.raise(window: window, pid: app.processIdentifier)
+                self?.ax.invalidate()
+                DispatchQueue.main.async { self?.hub.send(.execResult(ghostId: ghostId, ok: raised, error: raised ? nil : "no window \"\(window)\"")) }
+            }
         }
     }
 
@@ -331,6 +338,18 @@ final class Shell: NSObject, InputTapDelegate {
 }
 
 enum AppSwitcher {
+    /// Raise the app's window with this title and make it the main one. Call off the main thread (AX waits on the app).
+    static func raise(window title: String, pid: pid_t) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        let windows: [AXUIElement] = AX.attr(app, kAXWindowsAttribute) ?? []
+        guard let w = windows.first(where: { (AX.attr($0, kAXTitleAttribute) as String?) == title }) else { return false }
+        AXUIElementPerformAction(w, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(w, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(w, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        return true
+    }
+
     /// The bundle id of the app called `name` (case-insensitive): a running one first, then an installed one.
     static func bundleId(named name: String) -> String? {
         let n = name.lowercased()
@@ -349,7 +368,8 @@ enum AppSwitcher {
     /// Activate by bundle id. A background (LSUIElement) app can't always activate others under cooperative activation,
     /// so try NSRunningApplication, then AX frontmost, then LaunchServices; confirm by pid.
     static func activate(_ bid: String, done: @escaping (Bool, String?) -> Void) {
-        let instances = NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+        // A bare executable ("exe:TabShell", a testbed) has no bundle id to look up.
+        let instances = bid.hasPrefix("exe:") || bid.hasPrefix("pid:") ? [runningApp(bid)].compactMap { $0 } : NSRunningApplication.runningApplications(withBundleIdentifier: bid)
         guard let app = instances.first else { return open(bid, done: done) }
         let pid = app.processIdentifier
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return done(true, nil) }

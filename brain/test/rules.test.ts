@@ -120,3 +120,47 @@ test("what an app showed in response: title, text and controls, not the user's o
     assert.deepEqual(visibleChanges(form("Nothing submitted yet"), form("Nothing submitted yet", "5")), { added: [], removed: [] });
     assert.deepEqual(visibleChanges(form("Nothing submitted yet"), form("Submitted at 00:06")), { added: ['text "Submitted at 00:06"'], removed: ['text "Nothing submitted yet"'] });
 });
+
+test("values only go into fields they fit: no email into a name or a Number cell", async () => {
+    const { valueFits } = await import("../src/memory/facts.ts");
+    const f = (label: string) => ({ label });
+    assert.ok(!valueFits(f("Number"), "jane@acme.com"));
+    assert.ok(!valueFits(f("Your name"), "jane@acme.com"));
+    assert.ok(valueFits(f("Work email"), "jane@acme.com"));
+    assert.ok(valueFits(f("Username"), "jane@acme.com"));
+    assert.ok(valueFits(f("Number"), "40"));
+    assert.ok(valueFits(f("Your name"), "Jane Doe"));
+    assert.ok(!valueFits(f("Phone"), "https://acme.com"));
+});
+
+test("a goal that names a window Tab has seen switches to it on accept", async () => {
+    const { goalWindow } = await import("../src/brain.ts");
+    const main: ScreenState = { type: "state", app: "exe:TabShell", window: "Tab Testbed", seq: 1, ts: T, elements: [el("desc:Submit", "button", "Submit"), el("text:status", "text", "Submitted at 00:06")] };
+    const signup: ScreenState = { type: "state", app: "exe:TabShell", window: "Sign up", seq: 2, ts: T - 1000, elements: [el("desc:Your name", "textfield", "Your name")] };
+    assert.equal(goalWindow("Copy my details into the Sign up form", [main, signup], main)?.window, "Sign up");
+    assert.equal(goalWindow("Add it to Calendar", [main, signup], main), undefined);
+
+    const shell: HubToShell[] = [];
+    let b!: Brain;
+    const checker: RuleChecker = { async check(rules) { return { rule: rules[0], parsed: parseRule(rules[0].text), score: 0.9, task: "Copy my details into the Sign up form" }; } };
+    b = new Brain({
+        immediate: true,
+        decider: { name: "test", async decide() { return null; } },
+        rules: { book: new RuleBook([{ id: "r", text: "submitting the form copies my details into the Sign up form", enabled: true, created: 0 }]), checker },
+        sendShell: (m) => {
+            shell.push(m);
+            if (m.type === "exec") queueMicrotask(() => b.fromShell({ type: "exec_result", ghostId: m.ghostId, ok: true }));
+        },
+    });
+    b.fromShell({ ...signup, ts: Date.now() - 1000 });
+    b.fromShell({ type: "frontmost", app: "exe:TabShell", window: "Tab Testbed" });
+    b.fromShell({ ...main, ts: Date.now() });
+    b.fromShell({ type: "user_event", app: "exe:TabShell", kind: "click", target: el("desc:Submit", "button", "Submit"), ts: Date.now() });
+    await b.predictNow();
+    const ghost = (shell.filter((m) => m.type === "ghost").at(-1) as any)?.ghost;
+    assert.equal(ghost?.label, "Copy my details into the Sign up form ⇥");
+    b.fromShell({ type: "accept", ghostId: ghost.id });
+    await new Promise((r) => setTimeout(r, 10));
+    const exec = shell.find((m) => m.type === "exec") as any;
+    assert.deepEqual([exec?.action.op, exec?.action.app, exec?.action.window], ["switch_app", "exe:TabShell", "Sign up"]);
+});

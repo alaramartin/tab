@@ -51,7 +51,8 @@ setInterval(consolidate, 6 * 3_600_000).unref();
 
 const decider = await makeDecider({ memory });
 // Load the local model in the background so the first prediction doesn't wait for it.
-(decider as { warm?: () => Promise<void> }).warm?.().then(
+const warmed = (decider as { warm?: () => Promise<void> }).warm?.();
+warmed?.then(
     () => console.log(`[decider] ${decider.name} ready`),
     (err: Error) => console.error(`[decider] model failed to start: ${err.message}`),
 );
@@ -75,6 +76,11 @@ const namer = new IconNamer();
 const { RuleBook, LlamaRuleChecker, KeywordRuleChecker, DEFAULT_RULES_FILE } = await import("./rules.ts");
 const ruleServer = (decider as { server?: LlamaServer | null }).server;
 const rules = { book: new RuleBook(process.env.TAB_RULES_FILE || DEFAULT_RULES_FILE), checker: ruleServer ? new LlamaRuleChecker(ruleServer) : new KeywordRuleChecker() };
+// Warm the rule check once the model is up (the first check after start took ~5 s cold).
+if (rules.checker instanceof LlamaRuleChecker) {
+    const checker = rules.checker;
+    warmed?.then(() => checker.warm()).catch(() => {});
+}
 let searchEmbedder: import("./memory/embed.ts").Embedder | null = null;
 const brain = new Brain({
     sendShell: (m) => out("shell", m),

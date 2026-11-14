@@ -63,9 +63,31 @@ export function kindOf(label: string): Kind {
     if (/phone|mobile|\bcell\b|\btel\b/.test(l)) return "phone";
     if (/\burl\b|website|linkedin|github|portfolio|link\b/.test(l)) return "url";
     if (/\bzip\b|postal|post ?code/.test(l)) return "zip";
-    if (/\b(age|qty|quantity|amount|count|number of|years)\b/.test(l)) return "number";
+    if (/\b(age|qty|quantity|amount|count|number of|years)\b/.test(l) || /^(number|no\.?|#)$/.test(l.trim())) return "number";
     return "text";
 }
+/** What a value looks like, for the shapes that only belong in some fields. */
+function valueKind(v: string): "email" | "url" | "text" {
+    const t = v.trim();
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) return "email";
+    if (/^https?:\/\/\S+$/i.test(t)) return "url";
+    return "text";
+}
+
+/**
+ * Can this value go into this field? The field's kind must accept it (fits), and an email or URL only goes into a
+ * field named for one (or for a login, contact or recipient), never into "Your name" or a "Number" cell.
+ */
+export function valueFits(field: Pick<El, "label" | "placeholder">, v: string): boolean {
+    const name = field.label || field.placeholder || "";
+    const kind = kindOf(name);
+    if (!fits(kind, v)) return false;
+    const vk = valueKind(v);
+    if (vk === "email") return kind === "email" || /\b(user(name)?|login|account|contact|recipient|to|from|cc|bcc|id)\b/i.test(name) || !name.trim();
+    if (vk === "url") return kind === "url" || /\b(link|address|site|web|homepage|repo)\b/i.test(name) || !name.trim();
+    return true;
+}
+
 export function fits(kind: Kind, v: string): boolean {
     switch (kind) {
         case "email": return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);

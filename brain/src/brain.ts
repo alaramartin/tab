@@ -392,7 +392,7 @@ export class Brain {
 
     private maybeShow(a: Action, gen: number, latencyMs: number): boolean {
         if (gen !== this.gen || this.running) return false;
-        if (a.confidence < (this.goal && a.source === "model" ? GOAL_SHOW_AT : SHOW_AT)) return false;
+        if (a.confidence < (this.goal ? GOAL_SHOW_AT : SHOW_AT)) return false;
         if (actionKey(a) === this.dismissedKey) return false;
         // Payments are the user's: never a click that spends money, and on a card form nothing but the way to checkout.
         if (!allowedNearPayment(a, this.store.active(), (s) => this.resolve(s as Step))) return false;
@@ -499,11 +499,17 @@ export class Brain {
     private async startGoal(ghostId: string, g: NonNullable<Action["goal"]>): Promise<void> {
         this.hide();
         this.setGoal({ task: g.task, ruleId: g.ruleId, until: Date.now() + GOAL_MS });
-        if (g.app) {
-            const sw: Action = { op: "switch_app", app: `name:${g.app}`, value: `name:${g.app}`, label: "", confidence: 1, source: "model" };
+        // Where the goal happens: an app it names, else a window it names that Tab has seen ("the Sign up form").
+        const win = g.app ? undefined : goalWindow(g.task, this.store.recent(Date.now()), this.store.active());
+        const sw: Action | null = g.app
+            ? { op: "switch_app", app: `name:${g.app}`, value: `name:${g.app}`, label: "", confidence: 1, source: "model" }
+            : win
+              ? { op: "switch_app", app: win.app, value: win.app, window: win.window, label: "", confidence: 1, source: "model" }
+              : null;
+        if (sw) {
             const r = await this.exec(`${ghostId}:open`, sw);
             if (r.ok) countStep(this.hud, sw);
-            else console.log(`[rules] couldn't open ${g.app}: ${r.error}; working toward the goal here`);
+            else console.log(`[rules] couldn't open ${g.app ?? win?.window}: ${r.error}; working toward the goal here`);
         }
         this.onUserInput(false, true);
     }
@@ -731,6 +737,16 @@ export function nearby(r: Rect, state: ScreenState | undefined, excludeId?: stri
     const gap = (a: Rect, b: Rect) => Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)) + Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h));
     const same = (o: Rect) => o.x === r.x && o.y === r.y && o.w === r.w && o.h === r.h;
     return state.elements.filter((o) => o.id !== excludeId && !same(o.rect) && gap(o.rect, r) <= 120).map((o) => o.rect).slice(0, 40);
+}
+
+/** A window the goal names ("into the Sign up form" names "Sign up"), among recent screens other than the one in front. */
+export function goalWindow(task: string, recent: ScreenState[], active: ScreenState | undefined): ScreenState | undefined {
+    const t = ` ${task.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ")} `;
+    return recent
+        .filter((s) => s !== active && !(s.app === active?.app && s.window === active?.window))
+        .map((s) => ({ s, w: s.window.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim() }))
+        .filter(({ w }) => w.length >= 3 && t.includes(` ${w} `))
+        .sort((a, b) => b.w.length - a.w.length)[0]?.s;
 }
 
 function actionKey(a: Action): string {

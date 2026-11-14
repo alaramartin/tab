@@ -176,6 +176,12 @@ export const MATCH_AT = 0.7;
 export class LlamaRuleChecker implements RuleChecker {
     constructor(private server: LlamaServer) {}
 
+    /** One throwaway check at hub start, so the first real one doesn't pay for a cold model and an uncached prompt. */
+    async warm(): Promise<void> {
+        const family = this.server.spec.family ?? "qwen3";
+        await this.server.complete(chatPrompt(family, CHECK_SYSTEM, 'App: Finder · Window: "Desktop"\nScreen now (top to bottom):\n- button "OK"\n\nWhich of these have they just finished?\nA) None of these'), { nPredict: 1, nProbs: 4 });
+    }
+
     async check(rules: Rule[], ctx: RuleContext, signal?: AbortSignal): Promise<RuleMatch | null> {
         const family = this.server.spec.family ?? "qwen3";
         const list = rules.slice(0, LETTERS.length - 1).map((rule) => ({ rule, parsed: parseRule(rule.text) }));
@@ -192,17 +198,27 @@ export class LlamaRuleChecker implements RuleChecker {
         }
         const context = contextText(ctx) + changes;
         const options = [...list.map((x) => x.parsed.trigger), "None of these"];
-        const user = `${context}\n\nWhich of these have they just finished? Only pick one if the screen shows it done (the changes above, if any). Otherwise pick "None of these".\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
-        const r = await this.server.complete(chatPrompt(family, CHECK_SYSTEM, user), { nPredict: 1, nProbs: 24, signal });
-        const probs = new Map<string, number>();
-        for (const t of r.first) {
-            const k = t.token.trim();
-            if (k.length === 1 && LETTERS.slice(0, options.length).includes(k)) probs.set(k, (probs.get(k) ?? 0) + t.prob);
+        // The small model favours some letters whatever they say, so ask with the options in up to 4 rotated orders and
+        // average each option's probability over them (eval: npm run eval:rules).
+        const k = Math.min(4, options.length);
+        const sum = new Array<number>(options.length).fill(0);
+        let ms = 0;
+        for (let rot = 0; rot < k; rot++) {
+            const shift = Math.round((rot * options.length) / k);
+            const order = options.map((_, i) => (i + shift) % options.length); // position → option
+            const user = `${context}\n\nWhich of these have they just finished? Only pick one if the screen shows it done (the changes above, if any). Otherwise pick "None of these".\n${order.map((o, i) => `${LETTERS[i]}) ${options[o]}`).join("\n")}`;
+            const r = await this.server.complete(chatPrompt(family, CHECK_SYSTEM, user), { nPredict: 1, nProbs: 24, signal });
+            ms += r.ms;
+            const probs = new Array<number>(options.length).fill(0);
+            for (const t of r.first) {
+                const pos = LETTERS.indexOf(t.token.trim());
+                if (t.token.trim().length === 1 && pos >= 0 && pos < options.length) probs[order[pos]] += t.prob;
+            }
+            const total = probs.reduce((a, b) => a + b, 0);
+            if (total > 0) probs.forEach((x, i) => (sum[i] += x / total / k));
         }
-        const total = [...probs.values()].reduce((a, b) => a + b, 0);
-        if (total <= 0) return null;
-        const p = (i: number) => (probs.get(LETTERS[i]) ?? 0) / total;
-        if (process.env.TAB_DEBUG) console.log(`[rules] on "${ctx.active.window.slice(0, 40)}" (${r.ms.toFixed(0)} ms): ${options.map((o, i) => `${o} ${p(i).toFixed(2)}`).join(" · ")}`);
+        const p = (i: number) => sum[i];
+        if (process.env.TAB_DEBUG) console.log(`[rules] on "${ctx.active.window.slice(0, 40)}" (${ms.toFixed(0)} ms): ${options.map((o, i) => `${o} ${p(i).toFixed(2)}`).join(" · ")}`);
         let best = -1;
         for (let i = 0; i < list.length; i++) if (p(i) >= MATCH_AT && (best < 0 || p(i) > p(best))) best = i;
         if (best < 0) return null;
