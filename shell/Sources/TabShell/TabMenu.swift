@@ -54,7 +54,7 @@ struct TabMenuView: View {
                 divider
             }
 
-            TextField("Add a rule…", text: $draft)
+            TextField(model.connected ? "Add a rule…" : "Start Tab's hub to add rules", text: $draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.primary)
@@ -69,18 +69,31 @@ struct TabMenuView: View {
                 .disabled(!model.connected)
             divider
 
-            if model.rules.isEmpty {
-                Text(model.connected ? "No rules yet. Try “booking an event adds it to Calendar”: when you've just done the first part, Tab offers the rest." : "Tab's hub isn't running, so rules can't be changed.")
+            if !model.connected {
+                Text("Tab's hub isn't running, so there are no suggestions and rules can't be changed. Start it with `npm start` in brain/, or `shell/scripts/setup.sh --agent` to start it at login.")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.faint)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    .padding(.top, 10)
+                    .padding(.bottom, model.rules.isEmpty ? 10 : 2)
+            }
+            if model.rules.isEmpty {
+                if model.connected {
+                    Text("No rules yet. Try “booking an event adds it to Calendar”: when you've just done the first part, Tab offers the rest.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                }
             } else {
                 VStack(spacing: 0) {
                     ForEach(model.rules, id: \.id) { r in RuleRow(rule: r, send: { model.send?($0) }) }
                 }
                 .padding(.vertical, 4)
+                .disabled(!model.connected)
+                .opacity(model.connected ? 1 : 0.6)
             }
 
             divider
@@ -280,7 +293,7 @@ final class TabMenuPanel: NSPanel {
             { let m = TabMenuModel(); m.connected = true; return m }(),
             { let m = TabMenuModel(); m.connected = true; m.rules = rules; return m }(),
             { let m = TabMenuModel(); m.connected = true; m.rules = rules; m.goal = "Add Night Owls · Fri 9pm to Calendar"; m.paused = true; return m }(),
-            { let m = TabMenuModel(); m.connected = false; return m }(),
+            { let m = TabMenuModel(); m.connected = false; m.rules = rules; return m }(),
         ]
         let views = states.map { m -> NSView in
             let h = NSHostingView(rootView: TabMenuView(model: m))
