@@ -5,7 +5,7 @@
 #   add --artifacts to also delete build output in the repo (shell/.build, shell/build, brain/node_modules)
 #
 # Stops TabShell, the hub and Tab's model servers, removes the hub's login item, the signing keychain (and its entry
-# in the keychain search list), TabShell's privacy permissions and saved HUD settings, and ~/.tab (memory, models,
+# in the keychain search list), TabShell's privacy permissions and saved settings, and ~/.tab (memory, models,
 # payment ledger, settings). Homebrew's llama.cpp stays.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -50,7 +50,7 @@ if security list-keychains -d user | grep -q "tab-shell-signing"; then
 fi
 [ -f "$KC" ] && run security delete-keychain "$KC"
 
-# TabShell's privacy permissions (harmless if there are none) and saved HUD settings.
+# TabShell's privacy permissions (harmless if there are none) and saved settings.
 run tccutil reset Accessibility dev.tab.shell
 run tccutil reset ScreenCapture dev.tab.shell
 run tccutil reset ListenEvent dev.tab.shell

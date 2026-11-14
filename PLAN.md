@@ -10,9 +10,8 @@ This file records how Tab was planned and built. It has five parts: what's still
 
 Items marked *(needs you)* need a decision or the Mac to yourself. The rest a session can do alone.
 
-1. **Design the HUD.** *(needs you)* It's a placeholder: status, an expandable Tab did / You did, and Rules (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
-2. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-3. **Try rules on real tasks.** *(needs you)* Rules (HUD → Rules) have only run in unit tests and offscreen renders. Write two or three, do the tasks they describe, and check that the Yes/No trigger check fires at the right moments (`MATCH_AT` 0.7 in `brain/src/rules.ts`) and that goal-guided ghosts (shown from 0.4) can finish a goal in the named app. Typing in the HUD's rule field should hand the keyboard back to the app in front after Return or Esc.
+1. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
+2. **Try rules on real tasks.** *(needs you)* Rules (menu bar dropdown) have only run in unit tests, offscreen renders and one session on the testbed. Write two or three, do the tasks they describe, and check that the trigger check fires at the right moments (`MATCH_AT` 0.7 in `brain/src/rules.ts`) and that goal-guided ghosts (shown from 0.4) can finish a goal in the named app. Closing the dropdown should hand the keyboard back to the app in front.
 
 ### Stretch goal: payments
 
@@ -164,6 +163,13 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 
 14. **Nov 13.** Payments became a stretch goal (section 1). Tab stays out of them instead: nothing on card forms except the way to checkout, and never a click that spends money. The HUD's last-payment row and ledger button went with them.
 
+15. **Nov 14.** Rules tried live on the testbed, with computer use and a screen recording:
+    - The rule field handed the keyboard back after Return and Esc, but Tab then didn't accept the rule ghost: the HUD still counted its field as being edited. Fixed, then moot: the floating HUD was replaced by a dropdown under the menu bar icon (`TabMenu.swift`, modelled on menubar-todo), with the rules, the goal in progress and Tab's commands. The status line and Tab did / You did went with it. The dropdown takes the keyboard while open and gives it back to the app in front when it closes.
+    - The Yes/No trigger check said yes to "booking an event" after a form submit (1.00). It became one multiple-choice question over all the triggers plus "None of these".
+    - A rule's ghost is just its task (`Add 12 and 30 in Calculator ⇥`), with no "Rule:" prefix.
+    - Accepting opened Calculator, but Screen Time's block covered it, and Accessibility still read Calculator's buttons behind it, so Tab offered "Click 7". Screens covered by another app's window are now marked and get no ghost. While a goal is set, controls its words name (and + or = for "add") are ranked first among the model's options.
+    - The keycap at the pill's right end is concentric with the pill, so the pill's curve no longer cuts its corners.
+
 ### How we worked
 
 - The plan was written first and kept as a progress log.
@@ -192,7 +198,8 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
                                             similar moments in other apps                             ~1 ms
   ActionObserver  your clicks, typing       local LLM (Qwen3-1.7B on llama.cpp), after a pause       ~0.4 s
   Actuator        click / type / key  ◀──   one calibrated score per suggestion; a ghost above 0.6
-  Overlay, HUD    the ghost                 nothing on card forms; never Pay or Place order
+  Overlay         the ghost                 nothing on card forms or covered windows; never Pay or Place order
+  TabMenu         menu bar dropdown         rules (checked by the local LLM after you finish something)
 ```
 
 - **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. A changed value patches its one element, and a change inside one container re-reads only that container. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model. A window with little Accessibility is read with on-device OCR, and the icons and larger shapes in it (diagram boxes, images, game pieces) are found and named the same way, or by the text inside them.
@@ -202,7 +209,8 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
   - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
   - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search from the menu bar (Search Memory…).
 - **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. They include what you did after a similar step in other apps. The local model only runs once you pause, and stops as soon as you do something. On a screen asking for card or bank details nothing is offered except a click toward checkout, and a button that spends money (Pay, Place order, Buy now) is never offered anywhere (`brain/src/payguard.ts`).
-- **Rules** (`brain/src/rules.ts`, HUD → Rules): rules you write in plain words. When the local model sees you've just done what a rule's trigger says, the rule's goal is offered as a ghost, and accepting it turns the next ghosts into steps toward that goal.
+- **Rules** (`brain/src/rules.ts`, the menu bar dropdown in `TabMenu.swift`): rules you write in plain words. After you finish something and pause, the local model is asked which rule's trigger, if any, just happened ("None of these" is an option). A match offers the rule's goal for this case as a ghost, and accepting it turns the next ghosts into steps toward that goal, with the controls the goal names ranked first.
+- **Covered windows**: when another app's window covers at least half of the window Tab reads (a Screen Time block, another app's dialog), the screen is marked covered and nothing is offered on it (`AXSensor.coveredFraction`).
 - **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
 
 ## 5. Development
@@ -229,4 +237,4 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
 
 ### Shell tools
 
-`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions, `--subtree-selftest` runs offscreen with the Accessibility grant, and `--render-hud` and `--render-memory-search <out.png>` draw those windows offscreen.
+`TabShell --ax-dump [app]`, `--ax-bench`, `--ocr`, `--exec '<action>'` and `--testbed` help when working on the shell. `--tap-selftest` and `--vision-selftest` run offscreen and need no permissions, `--subtree-selftest` runs offscreen with the Accessibility grant, `--cover-selftest` checks when a window counts as covered, and `--render-menu`, `--render-memory-search` and `--render <out.png>` (every ghost style) draw offscreen.

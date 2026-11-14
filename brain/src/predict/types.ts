@@ -30,7 +30,7 @@ export interface Candidate {
     action: Action; // concrete: targets an element of ctx.active (or a sequence / navigation)
     score: number; // calibrated probability that this is the user's next action
     tier: Tier;
-    why?: string; // short provenance for the HUD and debugging, e.g. "after Click Send (12×)"
+    why?: string; // short provenance for logs and debugging, e.g. "after Click Send (12×)"
     pNone?: number; // model: probability it gave "None of these" on this screen (the combiner uses it)
 }
 

@@ -412,8 +412,48 @@ enum AXSensor {
         let title = (AX.attr(w, kAXTitleAttribute) as String?) ?? ""
         var st = ScreenState(app: bundleId, window: title, url: url, elements: all.map(\.0), seq: seq, ts: nowMs())
         st.nodes = nodes
+        if let f = AX.frame(w), covered(pid: pid, frame: f) { st.covered = true }
         return (st, all.map(\.1))
     }
+
+    /// One on-screen window, front to back, as the window server lists it.
+    struct WindowInfo { let pid: pid_t; let layer: Int; let alpha: Double; let bounds: CGRect }
+
+    static func onScreenWindows() -> [WindowInfo] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return list.compactMap { w in
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, let b = w[kCGWindowBounds as String] as? [String: Double] else { return nil }
+            return WindowInfo(pid: pid, layer: w[kCGWindowLayer as String] as? Int ?? 0, alpha: w[kCGWindowAlpha as String] as? Double ?? 1,
+                              bounds: CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0))
+        }
+    }
+
+    /// How much of `pid`'s window at `frame` other apps' windows cover, 0…1. Only windows in front of it count, at
+    /// layers 0–19: normal windows, panels and alerts (a Screen Time block is one). The Dock, the menu bar and Tab's own
+    /// ghost overlay sit on higher layers and span the whole screen, so they never count.
+    static func coveredFraction(_ windows: [WindowInfo], pid: pid_t, frame: Rect, me: pid_t = getpid()) -> Double {
+        let target = CGRect(x: frame.x, y: frame.y, width: frame.w, height: frame.h)
+        guard target.width > 0, target.height > 0 else { return 0 }
+        // A coarse grid over the window: the share of its cells under another app's window.
+        let n = 24
+        var hit = [Bool](repeating: false, count: n * n)
+        for w in windows {
+            if w.pid == pid, abs(w.bounds.minX - target.minX) < 3, abs(w.bounds.minY - target.minY) < 3, abs(w.bounds.width - target.width) < 3 { break } // reached it
+            if w.pid == pid || w.pid == me || w.layer < 0 || w.layer >= 20 || w.alpha < 0.05 { continue }
+            let c = w.bounds.intersection(target)
+            if c.isNull || c.isEmpty { continue }
+            for i in 0..<n {
+                for j in 0..<n {
+                    let p = CGPoint(x: target.minX + (CGFloat(i) + 0.5) * target.width / CGFloat(n), y: target.minY + (CGFloat(j) + 0.5) * target.height / CGFloat(n))
+                    if c.contains(p) { hit[i * n + j] = true }
+                }
+            }
+        }
+        return Double(hit.filter { $0 }.count) / Double(n * n)
+    }
+
+    /// Another app's window (a Screen Time block, another app's dialog) covers at least half of this one.
+    static func covered(pid: pid_t, frame: Rect) -> Bool { coveredFraction(onScreenWindows(), pid: pid, frame: frame) >= 0.5 }
 
     /// Find an element by the path a snapshot gave it.
     static func element(pid: pid_t, path want: String) -> AXUIElement? {

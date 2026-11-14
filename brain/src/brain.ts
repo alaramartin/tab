@@ -42,7 +42,7 @@ export interface BrainOpts {
     decider: Decider | null;
     /** Search Memory in the menu bar: past tasks by meaning (memory/episodes.ts). */
     searchMemory?(query: string): Promise<MemoryHit[]>;
-    /** The user's rules (HUD → Rules) and what checks them against what just happened (src/rules.ts). */
+    /** The user's rules (menu bar dropdown) and what checks them against what just happened (src/rules.ts). */
     rules?: { book: RuleBook; checker: RuleChecker };
     /** Tests: predict right away instead of debouncing and waiting for idle. */
     immediate?: boolean;
@@ -307,6 +307,8 @@ export class Brain {
         if (this.payment) return this.paying === this.payment.paymentId ? undefined : this.showPayment(this.payment);
         const active = this.store.active();
         if (!active) return;
+        // Another app's window covers this one (a Screen Time block): what's behind it can't be clicked, so offer nothing.
+        if (active.covered) return this.hide();
         const now = Date.now();
         if (this.goal && now > this.goal.until) this.setGoal(null);
 
@@ -392,7 +394,7 @@ export class Brain {
             op: "goal",
             app: active.app,
             value: match.task,
-            label: `Rule: ${match.task}`,
+            label: match.task,
             confidence: Math.max(match.score, SHOW_AT),
             source: "model",
             goal: { ruleId: match.rule.id, task: match.task, ...(parsed.app ? { app: parsed.app } : {}) },

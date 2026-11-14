@@ -83,7 +83,7 @@ test("a matching rule is offered as a ghost; accepting it opens the app and the 
     b.fromShell({ type: "user_event", app: "com.google.Chrome", kind: "click", target: el("desc:Book", "button", "Book"), ts: T });
     await b.predictNow();
     const ghost = (shell.filter((m) => m.type === "ghost").at(-1) as any)?.ghost;
-    assert.equal(ghost?.label, "Rule: Add Night Owls · Fri 9pm to Calendar ⇥");
+    assert.equal(ghost?.label, "Add Night Owls · Fri 9pm to Calendar ⇥");
 
     b.fromShell({ type: "accept", ghostId: ghost.id });
     await new Promise((r) => setTimeout(r, 10));
@@ -102,4 +102,14 @@ test("a matching rule is offered as a ghost; accepting it opens the app and the 
     // Esc on a step stops working toward the goal.
     b.fromShell({ type: "dismiss", ghostId: step.id });
     assert.equal(hud().goal, undefined);
+});
+
+test("a goal ranks the controls it names first", async () => {
+    const { goalWants } = await import("../src/predict/generic.ts");
+    const b = (label: string) => el(`desc:${label}`, "button", label);
+    const goal = "Add 12 and 30 in Calculator";
+    assert.deepEqual(["1", "2", "3", "0", "+", "=", "7", "AC", "×"].filter((l) => goalWants(goal, b(l))), ["1", "2", "3", "0", "+", "="]);
+    assert.ok(goalWants("Add Night Owls to Calendar", b("New Event")) === false);
+    assert.ok(goalWants("Save the receipt to Finder", b("Save")));
+    assert.ok(!goalWants(undefined, b("Save")));
 });

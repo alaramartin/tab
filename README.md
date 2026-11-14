@@ -22,9 +22,9 @@ Needs macOS 14+, Node 24 and Homebrew. `shell/scripts/setup.sh` installs everyth
 
 Then grant TabShell **Accessibility** (required) and **Screen Recording** (for reading windows without Accessibility, and for icon names) in System Settings → Privacy & Security.
 
-The menu bar icon has **Pause Tab** (nothing is read, recorded or suggested until you resume), **Forget the Last Hour** and **Search Memory…**. Click the top row of the HUD to see how much Tab did for you.
+Click Tab's menu bar icon for its dropdown: your rules, and **Pause Tab** (nothing is read, recorded or suggested until you resume), **Search Memory…**, **Forget the Last Hour** and **Quit Tab**.
 
-**Rules.** Click **Rules** in the HUD to write your own, in plain words: "booking an event adds it to Calendar", "after merging a PR, post the link in Slack". When you finish something a rule describes, Tab offers it as a ghost (`Rule: Add Night Owls · Fri 9pm to Calendar ⇥`). Press Tab and it opens the app the rule names, then offers each step toward the goal, one Tab press at a time. Esc, or **stop** in the HUD, ends it. The dot next to a rule turns it on or off, and × removes it. Rules are kept in `~/.tab/rules.json`, which you can also edit by hand.
+**Rules.** Write your own in the dropdown, in plain words: "booking an event adds it to Calendar", "after merging a PR, post the link in Slack". When you finish something a rule describes, Tab offers the rest as a ghost (`Add Night Owls · Fri 9pm to Calendar ⇥`). Press Tab and it opens the app the rule names, then offers each step toward that, one Tab press at a time. Esc, or **Stop** in the dropdown, ends it. The dot next to a rule turns it on or off, and × removes it. Rules are kept in `~/.tab/rules.json`, which you can also edit by hand.
 
 ### Settings
 

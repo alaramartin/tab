@@ -73,3 +73,12 @@ test("a click that spends money is never offered, wherever it is", async () => {
     await t.b.predictNow();
     assert.equal(t.ghost(), undefined);
 });
+
+test("a screen another app's window covers (a Screen Time block) gets no ghost", async () => {
+    const t = setup(() => click("desc:7", "7"));
+    t.b.fromShell({ type: "frontmost", app: "com.apple.calculator", window: "Calculator" });
+    t.b.fromShell({ ...screen("Calculator", [el("desc:7", "button", "7")]), app: "com.apple.calculator", covered: true });
+    await t.b.predictNow();
+    assert.equal(t.ghost(), undefined);
+    assert.equal(t.models(), 0);
+});

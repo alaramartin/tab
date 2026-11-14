@@ -316,8 +316,23 @@ final class PillView: NSView {
         }
     }
 
+    /// The keycap's outline. A side that sits against the pill's rounded end is rounded the same way (concentric: the
+    /// pill's radius minus the inset, which is half the key's height), so the pill's curve never cuts its corners.
+    private func keyPath(_ kr: CGRect) -> NSBezierPath {
+        let end = kr.height / 2
+        let right = end, left = content.keyOnly ? end : min(style.keyRadius, end)
+        let p = NSBezierPath()
+        p.move(to: CGPoint(x: kr.minX + left, y: kr.minY))
+        p.appendArc(from: CGPoint(x: kr.maxX, y: kr.minY), to: CGPoint(x: kr.maxX, y: kr.maxY), radius: right)
+        p.appendArc(from: CGPoint(x: kr.maxX, y: kr.maxY), to: CGPoint(x: kr.minX, y: kr.maxY), radius: right)
+        p.appendArc(from: CGPoint(x: kr.minX, y: kr.maxY), to: CGPoint(x: kr.minX, y: kr.minY), radius: left)
+        p.appendArc(from: CGPoint(x: kr.minX, y: kr.minY), to: CGPoint(x: kr.maxX, y: kr.minY), radius: left)
+        p.close()
+        return p
+    }
+
     private func drawKey(_ key: String, in kr: CGRect) {
-        let path = NSBezierPath(roundedRect: kr, xRadius: style.keyRadius, yRadius: style.keyRadius)
+        let path = keyPath(kr)
         style.keyFill(kind).setFill()
         path.fill()
         // Key edge: a 1 pt darker band along the bottom so it reads as a physical key (none while pressed).
@@ -709,7 +724,7 @@ final class Overlay {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.ignoresMouseEvents = true
-        // One above the HUD (.statusBar): a ghost is never hidden under the HUD panel.
+        // One above .statusBar: a ghost is never hidden under another app's floating or status-level window.
         window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.isReleasedWhenClosed = false
@@ -853,7 +868,7 @@ final class Overlay {
         })
     }
 
-    /// Schedule on the common modes, so animations keep running while a menu is open or the HUD is dragged.
+    /// Schedule on the common modes, so animations keep running while a menu is open or a window is dragged.
     @discardableResult
     static func onCommonModes(_ t: Timer) -> Timer {
         RunLoop.main.add(t, forMode: .common)

@@ -14,7 +14,7 @@ protocol InputTapDelegate: AnyObject {
     var visibleGhost: Ghost? { get }
     /// Tab accepted a pay ghost and the payment is settling ("Paying…").
     var paymentSettling: Bool { get }
-    /// Screen rects (top-left points) whose clicks are ours, e.g. the HUD.
+    /// Screen rects (top-left points) whose clicks are ours, e.g. the menu bar dropdown.
     var ownRects: [CGRect] { get }
     func tapAccept(_ g: Ghost)
     func tapDismiss(_ g: Ghost)

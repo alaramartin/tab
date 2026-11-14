@@ -1,7 +1,7 @@
-// Rules: short instructions the user writes in the HUD, such as "booking an event adds it to Calendar".
+// Rules: short instructions the user writes in the menu bar dropdown, such as "booking an event adds it to Calendar".
 // Each rule is split into a trigger ("booking an event") and a goal ("add it to Calendar"), with the app the goal
 // names, if any. After the user finishes something and pauses, the local model checks each rule's trigger against
-// what they just did. A match is offered as a ghost (`Rule: Add Night Owls · Fri 9pm to Calendar ⇥`). Accepting it
+// what they just did. A match is offered as a ghost (`Add Night Owls · Fri 9pm to Calendar ⇥`). Accepting it
 // opens the app and makes the goal the model's aim, so the next ghosts walk toward it one Tab at a time.
 //
 // Rules live in ~/.tab/rules.json (TAB_RULES_FILE overrides it), so they can also be edited by hand.
@@ -161,36 +161,45 @@ function contextText(ctx: RuleContext): string {
     return `App: ${appName(s.app)} · Window: "${s.window.slice(0, 60)}"${s.url ? ` · ${s.url.slice(0, 80)}` : ""}\nScreen now (top to bottom):\n${screen}\n\nWhat they just did (oldest first):\n${hist}`;
 }
 
-const CHECK_SYSTEM = "You decide whether a person has just finished a kind of task on their computer, from their screen and recent actions. Answer Yes or No.";
+const CHECK_SYSTEM = "You decide which kind of task, if any, a person has just finished on their computer, from their screen and recent actions. Reply with only a letter.";
 const TASK_SYSTEM = "You write one short follow-up task, like a to-do item, with the specifics from the screen (names, dates, times, amounts). Under 12 words. No preamble, no quotes.";
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTU";
 export const MATCH_AT = 0.7;
 
-/** Rule checks with the local model: one Yes/No forward pass per rule, then one short line for the matching one. */
+/**
+ * Rule checks with the local model. One forward pass asks which trigger, if any, just happened, with "None of these"
+ * as an option, so a rule has to beat doing nothing (a Yes/No question per rule said yes to almost anything). The
+ * matching rule then gets one short line: its goal for this case.
+ */
 export class LlamaRuleChecker implements RuleChecker {
     constructor(private server: LlamaServer) {}
 
     async check(rules: Rule[], ctx: RuleContext, signal?: AbortSignal): Promise<RuleMatch | null> {
         const family = this.server.spec.family ?? "qwen3";
         const context = contextText(ctx);
-        let best: { rule: Rule; parsed: ParsedRule; score: number } | null = null;
-        for (const rule of rules.slice(0, MAX_RULES)) {
-            const parsed = parseRule(rule.text);
-            const user = `${context}\n\nTask: ${parsed.trigger}\nHave they just finished this task (on this screen or in the actions above)? Answer Yes or No.`;
-            const r = await this.server.complete(chatPrompt(family, CHECK_SYSTEM, user), { nPredict: 1, nProbs: 10, signal });
-            let yes = 0, no = 0;
-            for (const t of r.first) {
-                const k = t.token.trim().toLowerCase();
-                if (k === "yes") yes += t.prob;
-                else if (k === "no") no += t.prob;
-            }
-            const score = yes + no > 0 ? yes / (yes + no) : 0;
-            if (score >= MATCH_AT && (!best || score > best.score)) best = { rule, parsed, score };
+        const list = rules.slice(0, LETTERS.length - 1).map((rule) => ({ rule, parsed: parseRule(rule.text) }));
+        if (!list.length) return null;
+        const options = [...list.map((x) => x.parsed.trigger), "None of these"];
+        const user = `${context}\n\nWhich of these have they just finished (on this screen or in the actions above)?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
+        const r = await this.server.complete(chatPrompt(family, CHECK_SYSTEM, user), { nPredict: 1, nProbs: 24, signal });
+        const probs = new Map<string, number>();
+        for (const t of r.first) {
+            const k = t.token.trim();
+            if (k.length === 1 && LETTERS.slice(0, options.length).includes(k)) probs.set(k, (probs.get(k) ?? 0) + t.prob);
         }
-        if (!best) return null;
-        const user = `${context}\n\nThey just did: ${best.parsed.trigger}\nFollow-up to do now: ${best.parsed.goal}\nWrite that follow-up for this case:`;
-        const r = await this.server.complete(chatPrompt(family, TASK_SYSTEM, user), { nPredict: 28, stop: ["\n", "<|im_end|>"], signal });
-        const task = r.text.trim().replace(/^["'\-•]+|["'.]+$/g, "").slice(0, 80) || best.parsed.goal;
-        return { ...best, task };
+        const total = [...probs.values()].reduce((a, b) => a + b, 0);
+        if (total <= 0) return null;
+        const p = (i: number) => (probs.get(LETTERS[i]) ?? 0) / total;
+        if (process.env.TAB_DEBUG) console.log(`[rules] on "${ctx.active.window.slice(0, 40)}" (${r.ms.toFixed(0)} ms): ${options.map((o, i) => `${o} ${p(i).toFixed(2)}`).join(" · ")}`);
+        let best = -1;
+        for (let i = 0; i < list.length; i++) if (p(i) >= MATCH_AT && (best < 0 || p(i) > p(best))) best = i;
+        if (best < 0) return null;
+        const { rule, parsed } = list[best];
+        const taskUser = `${context}\n\nThey just did: ${parsed.trigger}\nFollow-up to do now: ${parsed.goal}\nWrite that follow-up for this case:`;
+        const t = await this.server.complete(chatPrompt(family, TASK_SYSTEM, taskUser), { nPredict: 28, stop: ["\n", "<|im_end|>"], signal });
+        const task = t.text.trim().replace(/^["'\-•]+|["'.]+$/g, "").slice(0, 80) || parsed.goal;
+        if (process.env.TAB_DEBUG) console.log(`[rules] match "${rule.text}" → "${task}"`);
+        return { rule, parsed, score: p(best), task };
     }
 }
 

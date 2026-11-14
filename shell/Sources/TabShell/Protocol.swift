@@ -51,6 +51,7 @@ struct ScreenState: Codable {
     var ts: Double
     var nodes: Int? = nil // AX nodes walked (diagnostics)
     var vision: Bool? = nil // some elements were read from pixels: text (paths "ocr:…") and icons (paths "vis:…")
+    var covered: Bool? = nil // another app's window covers most of it (AXSensor.covered): nothing is offered on it
 }
 
 /// An action the user took in any app, resolved to the element it hit (ActionObserver).
@@ -104,7 +105,7 @@ struct TabDid: Codable, Equatable {
     var keys: Int
 }
 
-/// Every field optional so a partial hud from the hub still renders.
+/// What the hub reports for the menu bar dropdown (and counters it keeps). Every field optional.
 struct Hud: Codable, Equatable {
     var mode: String?
     var lastSource: String?
@@ -118,7 +119,7 @@ struct Hud: Codable, Equatable {
     var goal: String?
 }
 
-/// A rule the user wrote in the HUD ("booking an event adds it to Calendar").
+/// A rule the user wrote in the menu bar dropdown ("booking an event adds it to Calendar").
 struct HudRule: Codable, Equatable {
     var id: String
     var text: String

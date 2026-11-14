@@ -110,6 +110,7 @@ export function genericCandidates(ctx: PredictContext, upstream: Candidate[] = [
         .map(({ e, i }) => {
             let d = anchor >= 0 ? Math.abs(i - anchor) + (i < anchor ? 3 : 0) : i; // forward in reading order is likelier
             if (anchorEl?.section && e.section === anchorEl.section) d -= 5;
+            if (goalWants(ctx.goal, e)) d -= 1000; // working toward a goal: the controls it names come first
             return { e, d };
         })
         .sort((a, b) => a.d - b.d);
@@ -128,6 +129,24 @@ export function genericCandidates(ctx: PredictContext, upstream: Candidate[] = [
         add(act(s, "click", e));
     }
     return out;
+}
+
+// Words in a goal that name a control by what it does ("add 12 and 30" wants +).
+const GOAL_SYMBOLS: [RegExp, string[]][] = [
+    [/\b(add|plus|sum|total)\b/i, ["+", "add", "plus", "="]],
+    [/\b(subtract|minus)\b/i, ["-", "−", "subtract", "minus", "="]],
+    [/\b(multiply|times)\b/i, ["×", "*", "multiply", "="]],
+    [/\b(divide)\b/i, ["÷", "/", "divide", "="]],
+];
+
+/** Does the goal name this control? Its label appears in the goal, or it's the symbol for a word there. */
+export function goalWants(goal: string | undefined, e: El): boolean {
+    if (!goal) return false;
+    const label = (e.label || e.placeholder || "").trim().toLowerCase();
+    if (!label || label.length > 40) return false;
+    const g = goal.toLowerCase();
+    if (/^[\p{L}\p{N}]/u.test(label) ? new RegExp(`(^|[^\\p{L}])${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "u").test(g) : g.includes(label)) return true;
+    return GOAL_SYMBOLS.some(([w, labels]) => w.test(goal) && labels.includes(label));
 }
 
 /** URLs in the screen's text (not links, which are clickable already), most recently printed first. */

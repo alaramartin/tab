@@ -121,7 +121,7 @@ func runTapSelftest() -> Never {
     let c1 = feed(click(1100, 50)); settle(20)
     let hudCalls = fake.calls
     let c2 = feed(click(300, 300)); settle(20)
-    check("click on the HUD: passes through, not input", c1 && hudCalls.isEmpty, "\(hudCalls)")
+    check("click on Tab's own window: passes through, not input", c1 && hudCalls.isEmpty, "\(hudCalls)")
     check("click elsewhere: passes through, reported as input", c2 && fake.calls == ["input click"], "\(fake.calls)")
 
     reset(nil)

@@ -1,4 +1,4 @@
-// TabShell: reads and records the front app, draws ghosts and the HUD, owns Tab/Esc, runs actions.
+// TabShell: reads and records the front app, draws ghosts, owns Tab/Esc, runs actions, and has the menu bar dropdown.
 //   env TAB_DEBUG=1: details in the log (ghost labels, exec targets, OCR/typing/placement timings)
 //   TabShell                       run (connects to ws://127.0.0.1:7800)
 //   TabShell --selftest            draw every ghost kind at fixed rects, normal and high contrast
@@ -88,19 +88,24 @@ if let json = flagValue("--exec") {
 
 final class Shell: NSObject, InputTapDelegate {
     let overlay: Overlay
-    let hud: HUD
+    /// The menu bar dropdown: the goal in progress, rules, and Tab's commands.
+    let menu = TabMenuModel()
+    private lazy var menuPanel: TabMenuPanel = {
+        let p = TabMenuPanel(model: menu)
+        p.onOpenChange = { [weak self] open in
+            if open { self?.overlay.hide() } // the dropdown takes Tab and Esc while it's open
+            DispatchQueue.main.async { self?.statusItem?.button?.highlight(open) }
+        }
+        return p
+    }()
     private var hubConnected = false
     let tap = InputTap()
     let hub: HubClient
     let ax = AXPoller() // any frontmost app, via Accessibility
     lazy var actions = ActionObserver(ax: ax)
-    private var lastHud = Hud()
     private var statusItem: NSStatusItem?
     /// Paused: nothing is read, recorded or suggested (menu bar → Pause Tab).
     private(set) var paused = false
-    private var pauseItem: NSMenuItem?
-    private var showHudItem: NSMenuItem?
-    private var contrastItem: NSMenuItem?
     private lazy var memorySearch: MemorySearchPanel = {
         let p = MemorySearchPanel()
         p.search = { [weak self] q in
@@ -113,26 +118,27 @@ final class Shell: NSObject, InputTapDelegate {
 
     init(hubURL: URL, highContrast: Bool) {
         overlay = Overlay(highContrast: highContrast)
-        hud = HUD()
         hub = HubClient(url: hubURL)
         super.init()
-        hud.setHighContrast(highContrast)
-        hud.onClick = { [weak self] item in self?.hudClicked(item) }
-        hud.onRule = { [weak self] m in
+        menu.send = { [weak self] m in
             guard let self else { return }
-            if self.hubConnected { self.hub.send(m) } else { log("hud: hub not connected, rule change not sent") }
+            if self.hubConnected { self.hub.send(m) } else { log("menu: hub not connected, rule change not sent") }
         }
+        menu.onPause = { [weak self] in self?.togglePause() }
+        menu.onSearch = { [weak self] in self?.openMemorySearch() }
+        menu.onForget = { [weak self] in self?.forgetHour(); self?.menuPanel.close() }
+        menu.onQuit = { NSApp.terminate(nil) }
         tap.delegate = self
         hub.onMessage = { [weak self] m in self?.handle(m) }
         hub.onConnect = { [weak self] in
             self?.hubConnected = true
-            self?.hud.setConnected(true)
+            self?.menu.connected = true
             self?.reportFrontmost(NSWorkspace.shared.frontmostApplication)
         }
         // Hub gone: say so, and drop the ghost, so Tab stops being swallowed for an accept nobody will receive.
         hub.onDisconnect = { [weak self] in
             self?.hubConnected = false
-            self?.hud.setConnected(false)
+            self?.menu.connected = false
             self?.overlay.hide()
         }
         ax.onState = { [weak self] s in if self?.paused == false { self?.hub.send(.state(s)) } }
@@ -150,13 +156,9 @@ final class Shell: NSObject, InputTapDelegate {
         ax.setFrontmost(NSWorkspace.shared.frontmostApplication)
         hub.start()
         setUpMenuBar()
-        // Re-place the HUD only when displays change; a polling re-place would snap it back mid-drag.
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.replaceHud()
-        }
     }
 
-    // MARK: menu bar item (show/hide and reset the HUD, high contrast, quit)
+    // MARK: menu bar item: a click opens the dropdown (TabMenu.swift)
 
     private func setUpMenuBar() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -167,56 +169,21 @@ final class Shell: NSObject, InputTapDelegate {
             item.button?.title = "⇥"
         }
         item.button?.toolTip = "Tab"
-        let menu = NSMenu()
-        let show = NSMenuItem(title: "Show HUD", action: #selector(toggleHud), keyEquivalent: "")
-        show.target = self
-        menu.addItem(show)
-        let reset = NSMenuItem(title: "Reset HUD Position", action: #selector(resetHud), keyEquivalent: "")
-        reset.target = self
-        menu.addItem(reset)
-        let pause = NSMenuItem(title: "Pause Tab", action: #selector(togglePause), keyEquivalent: "")
-        pause.target = self
-        menu.addItem(pause)
-        pauseItem = pause
-        let forget = NSMenuItem(title: "Forget the Last Hour", action: #selector(forgetHour), keyEquivalent: "")
-        forget.target = self
-        menu.addItem(forget)
-        let search = NSMenuItem(title: "Search Memory…", action: #selector(openMemorySearch), keyEquivalent: "")
-        search.target = self
-        menu.addItem(search)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit TabShell", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-        item.menu = menu
+        item.button?.target = self
+        item.button?.action = #selector(menuClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
-        showHudItem = show
-        contrastItem = nil
-        refreshMenu()
     }
 
-    private func refreshMenu() {
-        showHudItem?.state = hud.isVisible ? .on : .off
-        contrastItem?.state = overlay.highContrast ? .on : .off
+    @objc private func menuClicked() {
+        if menuPanel.isVisible { return menuPanel.close() }
+        guard let b = statusItem?.button, let w = b.window else { return }
+        menuPanel.show(below: w.convertToScreen(b.convert(b.bounds, to: nil)))
     }
 
-    @objc private func toggleHud() {
-        hud.setVisible(!hud.isVisible)
-        refreshMenu()
-    }
-
-    @objc private func resetHud() {
-        hud.resetPosition()
-        if !hud.isVisible { hud.setVisible(true) }
-        refreshMenu()
-    }
-
-    @objc private func toggleContrast() { hudClicked("contrast") }
-
-
-    @objc private func togglePause() {
+    private func togglePause() {
         paused.toggle()
-        pauseItem?.title = paused ? "Resume Tab" : "Pause Tab"
+        menu.paused = paused
         if paused { overlay.hide() } else { ax.invalidate() }
         statusItem?.button?.image = NSImage(systemSymbolName: paused ? "pause.circle" : "arrow.right.to.line", accessibilityDescription: "Tab")
         statusItem?.button?.image?.isTemplate = true
@@ -224,22 +191,18 @@ final class Shell: NSObject, InputTapDelegate {
         log(paused ? "paused: nothing is read, recorded or suggested" : "resumed")
     }
 
-    @objc private func forgetHour() {
+    private func forgetHour() {
         hub.send(.forget(sinceMs: 3_600_000))
         overlay.hide()
         log("forget: asked the hub to delete the last hour")
     }
 
-    @objc private func openMemorySearch() { memorySearch.show() }
-
-    @objc private func quit() { NSApp.terminate(nil) }
+    private func openMemorySearch() { memorySearch.show() }
 
     private func startTapWhenTrusted() {
         if tap.start() { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.startTapWhenTrusted() }
     }
-
-    private func replaceHud() { if hud.isVisible { hud.place() } }
 
     // MARK: frontmost
 
@@ -280,8 +243,9 @@ final class Shell: NSObject, InputTapDelegate {
             log("icons named: \(items.map { $0.label.isEmpty ? "?" : $0.label }.joined(separator: ", "))")
             ax.invalidate()
         case .hud(let h):
-            lastHud = h
-            hud.update(h)
+            if menu.rules != (h.rules ?? []) { menu.rules = h.rules ?? [] }
+            if menu.goal != h.goal { menu.goal = h.goal }
+            if menuPanel.isVisible { DispatchQueue.main.async { self.menuPanel.layoutToFit() } }
         case .exec(let ghostId, let action):
             exec(ghostId, action)
         case .memoryResults(let query, let results):
@@ -327,24 +291,12 @@ final class Shell: NSObject, InputTapDelegate {
         }
     }
 
-    private func hudClicked(_ item: String) {
-        switch item {
-        case "contrast":
-            overlay.highContrast.toggle()
-            hud.setHighContrast(overlay.highContrast)
-            overlay.redraw()
-            refreshMenu()
-        default:
-            break
-        }
-    }
-
     // MARK: InputTapDelegate
 
-    /// While a rule is being typed in the HUD, Tab and Esc are the text field's, not the ghost's.
-    var visibleGhost: Ghost? { hud.isEditing ? nil : overlay.current }
+    /// While the dropdown is open, Tab and Esc are its own, not a ghost's.
+    var visibleGhost: Ghost? { menuPanel.isVisible ? nil : overlay.current }
     var paymentSettling: Bool { overlay.isPaying }
-    var ownRects: [CGRect] { [hud.screenRect] }
+    var ownRects: [CGRect] { menuPanel.isVisible ? [Screens.topLeft(menuPanel.frame)] : [] }
 
     func tapAccept(_ g: Ghost) {
         guard overlay.current?.id == g.id else { return }
@@ -376,7 +328,7 @@ final class Shell: NSObject, InputTapDelegate {
         if paused { return }
         guard let app = NSWorkspace.shared.frontmostApplication, let bid = appId(app) else { return }
         if kind == .click, ownRects.contains(where: { $0.contains(location) }) { return }
-        if kind == .key, hud.isEditing { return } // typing a rule into the HUD isn't something to record
+        if kind == .key, menuPanel.isVisible { return } // typing a rule into the dropdown isn't something to record
         actions.observe(RawInput(kind: kind, keyCode: keyCode, flags: flags, chars: chars, location: location,
                                  pid: app.processIdentifier, bundleId: bid, ts: ts))
     }
@@ -523,77 +475,17 @@ func renderSelftest(to out: String) {
     print("wrote \(out) \(Int(size.width))×\(Int(size.height)) pt")
 }
 
-/// Every HUD state side by side, with its shadow, 4 per row (--dark: on a dark page).
-func renderHUD(to out: String) {
-    let rules = [HudRule(id: "a", text: "booking an event adds it to Calendar", enabled: true),
-                 HudRule(id: "b", text: "after merging a PR, post the link in the team channel on Slack", enabled: true),
-                 HudRule(id: "c", text: "saving a receipt files it in Finder", enabled: false)]
-    // (name, connected, high contrast, hud before, hud)
-    let states: [(String, Bool, Bool, Hud?, Hud)] = [
-        ("offline, stale numbers", false, false, nil,
-         Hud(mode: "shown", lastSource: "model", lastLatencyMs: 212, modelCalls: 3, shown: 4, accepted: 3, tabDid: TabDid(clicks: 9, keys: 14), youDid: 9)),
-        ("idle, fresh start", true, false, nil, Hud(mode: "idle", modelCalls: 0, shown: 0, accepted: 0, tabDid: TabDid(clicks: 0, keys: 0), youDid: 0)),
-        ("predicting", true, false, nil, Hud(mode: "predicting", lastSource: "model", lastLatencyMs: 212, modelCalls: 3, shown: 3, accepted: 2,
-                                             tabDid: TabDid(clicks: 3, keys: 0), youDid: 5)),
-        ("just accepted", true, false,
-         Hud(mode: "running", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 2, keys: 0), youDid: 6),
-         Hud(mode: "shown", lastSource: "model", lastLatencyMs: 188, modelCalls: 4, shown: 3, accepted: 3, tabDid: TabDid(clicks: 3, keys: 0), youDid: 7)),
-        ("a repeat", true, false, nil,
-         Hud(mode: "shown", lastSource: "pattern", lastLatencyMs: 2, modelCalls: 6, shown: 8, accepted: 7, tabDid: TabDid(clicks: 9, keys: 131), youDid: 61)),
-        ("running, <1 ms", true, false, nil,
-         Hud(mode: "running", lastSource: "pattern", lastLatencyMs: 0, modelCalls: 6, shown: 9, accepted: 8, tabDid: TabDid(clicks: 14, keys: 150), youDid: 64)),
-        ("high contrast", true, true, nil,
-         Hud(mode: "idle", lastSource: "model", lastLatencyMs: 640, modelCalls: 9, shown: 16, accepted: 15, tabDid: TabDid(clicks: 31, keys: 168), youDid: 72)),
-        ("stress", true, false, nil,
-         Hud(mode: "predicting", lastSource: "pattern", lastLatencyMs: 1234, modelCalls: 99, shown: 99, accepted: 99, tabDid: TabDid(clicks: 480, keys: 754),
-             youDid: 9999)),
-        ("rules open", true, false, nil,
-         Hud(mode: "idle", modelCalls: 2, shown: 3, accepted: 2, tabDid: TabDid(clicks: 3, keys: 12), youDid: 20, rules: rules)),
-        ("a rule in progress", true, false, nil,
-         Hud(mode: "shown", lastSource: "model", lastLatencyMs: 402, modelCalls: 5, shown: 4, accepted: 3, tabDid: TabDid(clicks: 4, keys: 12), youDid: 21,
-             rules: rules, goal: "Add Night Owls · Fri 9pm to Calendar")),
-    ]
-    let s = HUDView.size(expanded: true, rulesOpen: true, rules: rules.count)
-    let gap: CGFloat = 48, cols = 4
-    let rows = (states.count + cols - 1) / cols
-    let root = BackgroundView(frame: CGRect(x: 0, y: 0, width: CGFloat(cols) * (s.width + gap) + gap, height: CGFloat(rows) * (s.height + gap) + gap))
-    root.dark = args.contains("--dark")
-    for (i, (name, connected, hc, before, h)) in states.enumerated() {
-        let o = CGPoint(x: gap + CGFloat(i % cols) * (s.width + gap), y: gap + CGFloat(i / cols) * (s.height + gap))
-        let open = i % 2 == 1 && h.rules == nil // every other one with the breakdown open
-        let rulesOpen = h.rules != nil && h.goal == nil
-        let vs = HUDView.size(expanded: open, rulesOpen: rulesOpen, rules: h.rules?.count ?? 0)
-        root.addSubview(HUDShadowView(frame: CGRect(x: o.x - HUDShadowView.margin, y: o.y - HUDShadowView.margin, width: vs.width + 2 * HUDShadowView.margin, height: vs.height + 2 * HUDShadowView.margin)))
-        let v = HUDView(frame: CGRect(origin: o, size: vs))
-        v.expanded = open
-        v.rulesOpen = rulesOpen
-        v.connected = connected
-        if let before { v.hud = before }
-        v.hud = h
-        v.highContrast = hc
-        root.addSubview(v)
-        let cap = NSTextField(labelWithString: name)
-        cap.font = .systemFont(ofSize: 11, weight: .medium)
-        cap.textColor = root.dark ? .lightGray : .darkGray
-        cap.frame = CGRect(x: o.x, y: o.y - 20, width: s.width, height: 16)
-        root.addSubview(cap)
-    }
-    guard let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { fatalError("no bitmap") }
-    root.cacheDisplay(in: root.bounds, to: rep)
-    try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
-    print("wrote \(out)")
-}
-
 // MARK: - main
 
 if args.contains("--tap-selftest") { runTapSelftest() }
 if args.contains("--vision-selftest") { runVisionSelftest() }
 if args.contains("--subtree-selftest") { runSubtreeSelftest() }
+if args.contains("--cover-selftest") { runCoverSelftest() }
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-if let out = flagValue("--render-hud") {
-    renderHUD(to: out)
+if let out = flagValue("--render-menu") {
+    TabMenuPanel.render(to: out)
     exit(0)
 }
 if let out = flagValue("--render-memory-search") {

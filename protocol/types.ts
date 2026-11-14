@@ -51,6 +51,7 @@ export interface ScreenState {
     ts: number;
     nodes?: number; // AX nodes walked (diagnostics)
     vision?: boolean; // some elements were read from pixels
+    covered?: boolean; // another app's window covers most of it (a Screen Time block, another app's dialog): nothing is offered on it
 }
 
 /** Something the user did, resolved to the element it hit. */
@@ -108,11 +109,11 @@ export interface Hud {
     tabDid: { clicks: number; keys: number }; // what Tab executed for the user
     youDid: number; // every real user input, including Tab/Esc presses
     lastTx?: { hash: string; explorerUrl: string; amountUsd: string };
-    rules?: HudRule[]; // the user's rules, for the HUD's Rules list
+    rules?: HudRule[]; // the user's rules, for the menu bar dropdown
     goal?: string; // a rule being carried out: what the ghosts are working toward
 }
 
-/** A rule as the HUD lists it: what the user wrote, and whether it's on. */
+/** A rule as the menu bar dropdown lists it: what the user wrote, and whether it's on. */
 export interface HudRule {
     id: string;
     text: string;
@@ -129,10 +130,10 @@ export type ShellToHub =
     | { type: "paused"; paused: boolean } // menu bar → Pause Tab
     | { type: "forget"; sinceMs: number } // menu bar → Forget the Last Hour
     | { type: "memory_search"; query: string } // menu bar → Search Memory
-    | { type: "rule_add"; text: string } // HUD → Rules
+    | { type: "rule_add"; text: string } // menu bar dropdown → rules
     | { type: "rule_remove"; id: string }
     | { type: "rule_toggle"; id: string; enabled: boolean }
-    | { type: "goal_clear" } // HUD → stop working toward a rule's goal
+    | { type: "goal_clear" } // menu bar dropdown → Stop working toward a rule's goal
     | { type: "input"; kind: "key" | "click" }
     | { type: "accept"; ghostId: string }
     | { type: "dismiss"; ghostId: string }
