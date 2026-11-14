@@ -135,11 +135,30 @@ export class RuleBook {
     }
 }
 
-/** What a rule check sees: the screen now and the steps that led to it. */
+/** What a rule check sees: the screen now, the screen when the user finished their last step, and the steps. */
 export interface RuleContext {
     now: number;
     active: ScreenState;
+    before?: ScreenState; // the screen at the finishing step (a click on a button, Return)
     history: PastStep[];
+}
+
+/**
+ * What an app showed in response, between two screens: the window title, text, and which controls exist. Field
+ * values and focus are left out: those are the user's own edits, not a sign that something finished.
+ */
+export function visibleChanges(before: ScreenState, after: ScreenState): { added: string[]; removed: string[] } {
+    const lines = (s: ScreenState) => {
+        const out = new Set<string>([`window "${s.window.slice(0, 60)}"`]);
+        for (const e of s.elements) {
+            const label = e.label.trim().slice(0, 60);
+            if (!label || e.role === "textfield" || e.role === "textarea" || e.role === "cell" || e.role === "row") continue;
+            out.add(e.role === "text" ? `text "${label}"` : `${e.role} "${label}"`);
+        }
+        return out;
+    };
+    const a = lines(before), b = lines(after);
+    return { added: [...b].filter((l) => !a.has(l)).slice(0, 8), removed: [...a].filter((l) => !b.has(l)).slice(0, 8) };
 }
 
 export interface RuleMatch {
@@ -176,11 +195,21 @@ export class LlamaRuleChecker implements RuleChecker {
 
     async check(rules: Rule[], ctx: RuleContext, signal?: AbortSignal): Promise<RuleMatch | null> {
         const family = this.server.spec.family ?? "qwen3";
-        const context = contextText(ctx);
         const list = rules.slice(0, LETTERS.length - 1).map((rule) => ({ rule, parsed: parseRule(rule.text) }));
         if (!list.length) return null;
+        // Finishing a task shows on screen (a confirmation, a new window, a status line). Nothing changed: nothing finished.
+        let changes = "";
+        if (ctx.before) {
+            const d = visibleChanges(ctx.before, ctx.active);
+            if (!d.added.length && !d.removed.length) {
+                if (process.env.TAB_DEBUG) console.log(`[rules] on "${ctx.active.window.slice(0, 40)}": nothing visible changed, no rule checked`);
+                return null;
+            }
+            changes = `\n\nWhat changed on screen after their last action:\n${[...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n")}`;
+        }
+        const context = contextText(ctx) + changes;
         const options = [...list.map((x) => x.parsed.trigger), "None of these"];
-        const user = `${context}\n\nWhich of these have they just finished (on this screen or in the actions above)?\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
+        const user = `${context}\n\nWhich of these have they just finished? Only pick one if the screen shows it done (the changes above, if any). Otherwise pick "None of these".\n${options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n")}`;
         const r = await this.server.complete(chatPrompt(family, CHECK_SYSTEM, user), { nPredict: 1, nProbs: 24, signal });
         const probs = new Map<string, number>();
         for (const t of r.first) {

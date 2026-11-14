@@ -84,6 +84,8 @@ export class Brain {
     /** A rule being carried out: the model's ghosts work toward `task` until it lapses or the user stops it. */
     private goal: { task: string; ruleId: string; until: number } | null = null;
     private ruleCheckDue = false; // the user finished something: check the rules once they pause
+    private ruleBefore: ScreenState | undefined; // the screen at that finishing step, to see what it changed
+    private inputScreen: ScreenState | undefined; // the screen when the last key or click happened, before it had any effect
 
     constructor(private o: BrainOpts) {
         this.pattern = new PatternEngine(o.memory ?? null);
@@ -185,6 +187,7 @@ export class Brain {
                     );
                 break;
             case "input":
+                this.inputScreen = this.store.active();
                 this.hud.youDid++;
                 this.onUserInput();
                 break;
@@ -269,7 +272,10 @@ export class Brain {
         });
         this.dismissedKey = null; // the user did something: everything may be offered again
         const finishing = (e.kind === "click" && e.target?.role === "button") || (e.kind === "key" && (e.value === "Return" || e.value === "Enter"));
-        if (finishing) this.ruleCheckDue = true;
+        if (finishing) {
+            this.ruleCheckDue = true;
+            this.ruleBefore = this.inputScreen ?? this.store.active();
+        }
         this.onUserInput(finishing, true);
     }
 
@@ -383,7 +389,7 @@ export class Brain {
         try {
             this.modelAbort?.abort();
             const ctl = (this.modelAbort = new AbortController());
-            match = await r.checker.check(rules, { now: Date.now(), active, history: this.history.entries.map(toPast) }, ctl.signal);
+            match = await r.checker.check(rules, { now: Date.now(), active, before: this.ruleBefore, history: this.history.entries.map(toPast) }, ctl.signal);
         } catch (err) {
             if ((err as Error).name !== "AbortError") console.error("[rules]", (err as Error).message);
             return false;

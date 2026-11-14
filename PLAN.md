@@ -11,7 +11,7 @@ This file records how Tab was planned and built. It has five parts: what's still
 Items marked *(needs you)* need a decision or the Mac to yourself. The rest a session can do alone.
 
 1. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-2. **Try rules on real tasks.** *(needs you)* Rules (menu bar dropdown) have only run in unit tests, offscreen renders and one session on the testbed. Write two or three, do the tasks they describe, and check that the trigger check fires at the right moments (`MATCH_AT` 0.7 in `brain/src/rules.ts`) and that goal-guided ghosts (shown from 0.4) can finish a goal in the named app. Closing the dropdown should hand the keyboard back to the app in front.
+2. **Make goal-guided ghosts finish.** Tried live on the testbed (Nov 14): with the rule "submitting the form copies my details into the Sign up form", submitting matched it and the ghost offered the copy. Once the user was in the Sign up window, the goal steps filled "Your name" and "Last name" correctly, then the model answered "None of these" with Work email and Current company still empty, though the values were on the other form. Before that, while the main window was still in front, the first goal step typed an email into a table cell (0.81), because the model only gets options from the window in front. To try: offer to switch to a window or app the goal names when it isn't in front; keep goal steps going while an empty field has a fill from field facts; keep goal steps to fields whose kind fits the value. Also check the trigger on a few real tasks in real apps (a booking, a merged PR), and its speed: about 5 s on the first check after the hub starts.
 
 ### Stretch goal: payments
 
@@ -169,6 +169,7 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
     - A rule's ghost is just its task (`Add 12 and 30 in Calculator ⇥`), with no "Rule:" prefix.
     - Accepting opened Calculator, but Screen Time's block covered it, and Accessibility still read Calculator's buttons behind it, so Tab offered "Click 7". Screens covered by another app's window are now marked and get no ghost. While a goal is set, controls its words name (and + or = for "add") are ranked first among the model's options.
     - The keycap at the pill's right end is concentric with the pill, so the pill's curve no longer cuts its corners.
+    - The multiple-choice check still picked "submitting the form" after the user edited a table cell and pressed Return (1.00). Now the rules are checked only when something visible changed after the finishing step (window title, text, which controls exist; not field values or focus), and the model is shown those changes. After that, editing a cell checked no rule, and a real submit matched with the ghost "Copy my details into the Sign up form ⇥" (findings for goal steps in section 1).
 
 ### How we worked
 

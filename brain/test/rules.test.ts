@@ -113,3 +113,13 @@ test("a goal ranks the controls it names first", async () => {
     assert.ok(goalWants("Save the receipt to Finder", b("Save")));
     assert.ok(!goalWants(undefined, b("Save")));
 });
+
+test("what an app showed in response: title, text and controls, not the user's own field edits", async () => {
+    const { visibleChanges } = await import("../src/rules.ts");
+    const form = (status: string, cell = ""): ScreenState => ({
+        type: "state", app: "x", window: "Form", seq: 1, ts: T,
+        elements: [el("desc:Number", "textfield", "Number", { value: cell }), el("text:status", "text", status), el("desc:Submit", "button", "Submit")],
+    });
+    assert.deepEqual(visibleChanges(form("Nothing submitted yet"), form("Nothing submitted yet", "5")), { added: [], removed: [] });
+    assert.deepEqual(visibleChanges(form("Nothing submitted yet"), form("Submitted at 00:06")), { added: ['text "Submitted at 00:06"'], removed: ['text "Nothing submitted yet"'] });
+});
