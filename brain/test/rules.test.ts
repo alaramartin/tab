@@ -164,3 +164,12 @@ test("a goal that names a window Tab has seen switches to it on accept", async (
     const exec = shell.find((m) => m.type === "exec") as any;
     assert.deepEqual([exec?.action.op, exec?.action.app, exec?.action.window], ["switch_app", "exe:TabShell", "Sign up"]);
 });
+
+test("a trigger's own words in newly shown text count as evidence; buttons don't appear in what's checked", async () => {
+    const { saysSo } = await import("../src/rules.ts");
+    assert.ok(saysSo("submitting the form", ['text "Submitted at 00:24:34"']));
+    assert.ok(saysSo("merging a PR", ['text "Pull request successfully merged and closed"']));
+    assert.ok(saysSo("booking an event", ['window "Booking confirmed · Night Owls"']));
+    assert.ok(!saysSo("submitting the form", ['text "Settings"', 'window "Settings"']));
+    assert.ok(!saysSo("booking an event", ['text "About 1,240,000 results"']));
+});

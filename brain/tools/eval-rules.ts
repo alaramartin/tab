@@ -90,6 +90,21 @@ const cases: Case[] = [
     },
 ];
 
+// The testbed's form, with one rule (as in the live test): a submit, and a table edit that isn't one.
+const TB = "exe:TabShell";
+const form = (status: string) => screen(TB, "Tab Testbed", [el("textfield", "Full name", { value: "Jane Doe" }), el("textfield", "Email", { value: "jane@acme.com" }), el("textfield", "Employer", { value: "Initech" }), el("button", "Submit"), el("text", status)]);
+const oneRule: Rule[] = [{ id: "copy", text: "submitting the form copies my details into the Sign up form", enabled: true, created: 0 }];
+const single: Case[] = [
+    { name: "testbed form submitted (one rule)", before: form("Nothing submitted yet"), after: form("Submitted at 00:24:34.536"), history: [typed(TB, "Employer", "Initech"), click(TB, "Submit")], want: "copy" },
+    {
+        name: "testbed: a different window opened (one rule)",
+        before: form("Nothing submitted yet"),
+        after: screen(TB, "Settings", [el("text", "Settings"), el("checkbox", "Dark mode"), el("button", "Done")]),
+        history: [click(TB, "Gear")],
+        want: null,
+    },
+];
+
 const server = new LlamaServer(MODELS.qwen, 7814); // its own port: a running hub keeps 7811
 if (!server.available()) {
     console.error(`model missing: ${server.path}`);
@@ -105,9 +120,9 @@ if (warm) {
 }
 let right = 0;
 const ms: number[] = [];
-for (const c of cases) {
+for (const c of [...cases, ...single]) {
     const t0 = performance.now();
-    const m = await checker.check(rules, { now: T, active: c.after, before: c.before, history: c.history });
+    const m = await checker.check(single.includes(c) ? oneRule : rules, { now: T, active: c.after, before: c.before, history: c.history });
     const t = performance.now() - t0;
     ms.push(t);
     const got = m?.rule.id ?? null;
@@ -116,5 +131,5 @@ for (const c of cases) {
     console.log(`${ok ? "✓" : "✗"} ${c.name.padEnd(44)} ${String(got ?? "none").padEnd(8)} want ${String(c.want ?? "none").padEnd(8)} ${t.toFixed(0).padStart(5)} ms${m ? `  "${m.task}" (${m.score.toFixed(2)})` : ""}`);
 }
 const sorted = [...ms].sort((a, b) => a - b);
-console.log(`\n${right}/${cases.length} right · first check ${ms[0].toFixed(0)} ms · median ${sorted[Math.floor(sorted.length / 2)].toFixed(0)} ms${warm ? " (warmed)" : " (cold start)"}`);
+console.log(`\n${right}/${cases.length + single.length} right · first check ${ms[0].toFixed(0)} ms · median ${sorted[Math.floor(sorted.length / 2)].toFixed(0)} ms${warm ? " (warmed)" : " (cold start)"}`);
 server.stop();

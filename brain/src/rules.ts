@@ -164,6 +164,22 @@ function contextText(ctx: RuleContext): string {
 }
 
 const CHECK_SYSTEM = "You decide which kind of task, if any, a person has just finished on their computer, from their screen and recent actions. Reply with only a letter.";
+const STOP = new Set(["the", "a", "an", "my", "to", "in", "on", "for", "of", "and", "or", "it", "its", "this", "that", "some", "any", "with", "from", "into", "after", "when"]);
+
+/** A word's stem: common endings off, then at most 5 letters ("submitting", "submitted" → "submi"; "merging", "merged" → "merg"). */
+function stem(w: string): string {
+    return w.toLowerCase().replace(/(ing|ed|es|s)$/, "").slice(0, 5);
+}
+
+/** Does newly shown text use one of the trigger's words (by stem)? Words of 4+ letters, not "the" or "form". */
+export function saysSo(trigger: string, shown: string[]): boolean {
+    const words = trigger.toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length >= 4 && !STOP.has(w) && w !== "form" && w !== "page");
+    if (!words.length || !shown.length) return false;
+    const hay = shown.join(" ").toLowerCase().split(/[^\p{L}]+/u).map(stem);
+    return words.some((w) => hay.includes(stem(w)));
+}
+
+const EVERYDAY = ["searching or browsing", "typing or editing text", "opening a window or a menu"];
 const TASK_SYSTEM = "You write one short follow-up task, like a to-do item, with the specifics from the screen (names, dates, times, amounts). Under 12 words. No preamble, no quotes.";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTU";
 export const MATCH_AT = 0.7;
@@ -188,16 +204,21 @@ export class LlamaRuleChecker implements RuleChecker {
         if (!list.length) return null;
         // Finishing a task shows on screen (a confirmation, a new window, a status line). Nothing changed: nothing finished.
         let changes = "";
+        let shown: string[] = []; // text and titles that appeared: where a finished task says so
         if (ctx.before) {
             const d = visibleChanges(ctx.before, ctx.active);
             if (!d.added.length && !d.removed.length) {
                 if (process.env.TAB_DEBUG) console.log(`[rules] on "${ctx.active.window.slice(0, 40)}": nothing visible changed, no rule checked`);
                 return null;
             }
+            shown = d.added.filter((l) => l.startsWith("text ") || l.startsWith("window "));
             changes = `\n\nWhat changed on screen after their last action:\n${[...d.added.map((l) => `+ ${l}`), ...d.removed.map((l) => `- ${l}`)].join("\n")}`;
         }
         const context = contextText(ctx) + changes;
-        const options = [...list.map((x) => x.parsed.trigger), "None of these"];
+        // Everyday things that are never a rule, so that with one or two rules the model still chooses among real
+        // alternatives (two options alone came down to letter position).
+        const fillers = EVERYDAY.slice(0, Math.max(0, 3 - list.length));
+        const options = [...list.map((x) => x.parsed.trigger), ...fillers, "None of these"];
         // The small model favours some letters whatever they say, so ask with the options in up to 4 rotated orders and
         // average each option's probability over them (eval: npm run eval:rules).
         const k = Math.min(4, options.length);
@@ -217,7 +238,9 @@ export class LlamaRuleChecker implements RuleChecker {
             const total = probs.reduce((a, b) => a + b, 0);
             if (total > 0) probs.forEach((x, i) => (sum[i] += x / total / k));
         }
-        const p = (i: number) => sum[i];
+        // The trigger's own words in text that just appeared ("Your booking is confirmed", "successfully merged",
+        // "Report submitted") are evidence the model alone weighs too little.
+        const p = (i: number) => sum[i] + (i < list.length && saysSo(list[i].parsed.trigger, shown) ? 0.15 : 0);
         if (process.env.TAB_DEBUG) console.log(`[rules] on "${ctx.active.window.slice(0, 40)}" (${ms.toFixed(0)} ms): ${options.map((o, i) => `${o} ${p(i).toFixed(2)}`).join(" · ")}`);
         let best = -1;
         for (let i = 0; i < list.length; i++) if (p(i) >= MATCH_AT && (best < 0 || p(i) > p(best))) best = i;
