@@ -13,7 +13,6 @@ What it does:
 - **Completes what you're typing** with things you've typed before.
 - **Continues sequences.** Number three rows (10, 20, 30) and it offers 40, then "Fill the remaining 3".
 - **Repeats a chore for the next item.** Close one ticket from a list by hand, and it offers the same steps for the next one, then for all the rest.
-- **Leaves payments to you.** On a screen that asks for card or bank details, Tab suggests nothing except the button that takes you to checkout. It never offers to press Pay, Place order or Buy now.
 
 How Tab works, how to develop it, how it was built and what's still to do: [`PLAN.md`](PLAN.md).
 
@@ -36,6 +35,5 @@ The menu bar icon has **Pause Tab** (nothing is read, recorded or suggested unti
 | Suggest, but save nothing to disk | `TAB_MEMORY=off` |
 | Fast predictions only, no local LLM | `TAB_LLM=off` |
 | Details in the logs | `TAB_DEBUG=1` (ghost text, typed values and timings) |
-| Pay from a wallet | `PAYER_PRIVATE_KEY` in `.env` (USDC on Base Sepolia, a testnet) |
 
 To remove Tab and everything it saved: `shell/scripts/uninstall.sh --yes`.
