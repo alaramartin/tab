@@ -10,10 +10,18 @@ This file records how Tab was planned and built. It has five parts: what's still
 
 Items marked *(needs you)* need a decision or the Mac to yourself. The rest a session can do alone.
 
-1. **Notice payment requests in any app.** *(needs you: pick the approach)* The hub can check and pay an x402 402 (`brain/src/pay/`), but nothing reports them yet. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). Options: a local proxy, or a small browser extension.
-2. **Design the HUD.** *(needs you)* It's a placeholder: status, last payment, and an expandable Tab did / You did (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
-3. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
-4. **Try rules on real tasks.** *(needs you)* Rules (HUD → Rules) have only run in unit tests and offscreen renders. Write two or three, do the tasks they describe, and check that the Yes/No trigger check fires at the right moments (`MATCH_AT` 0.7 in `brain/src/rules.ts`) and that goal-guided ghosts (shown from 0.4) can finish a goal in the named app. Typing in the HUD's rule field should hand the keyboard back to the app in front after Return or Esc.
+1. **Design the HUD.** *(needs you)* It's a placeholder: status, last payment, and an expandable Tab did / You did (`shell/Sources/TabShell/HUD.swift`; `TabShell --render-hud out.png` draws every state offscreen).
+2. **Learn from real use.** *(needs a few days of your use)* Record a few days, fit the combiner (`npm run eval -- --llm --fit`), then try fine-tuning the local model on accepted and dismissed ghosts.
+3. **Try rules on real tasks.** *(needs you)* Rules (HUD → Rules) have only run in unit tests and offscreen renders. Write two or three, do the tasks they describe, and check that the Yes/No trigger check fires at the right moments (`MATCH_AT` 0.7 in `brain/src/rules.ts`) and that goal-guided ghosts (shown from 0.4) can finish a goal in the named app. Typing in the HUD's rule field should hand the keyboard back to the app in front after Return or Esc.
+
+### Stretch goal: payments
+
+Tab doesn't take part in payments for now. On a screen that asks for card or bank details it suggests nothing except a click toward checkout, and it never offers the button that spends the money (`brain/src/payguard.ts`).
+
+The hub can already check and pay an x402 HTTP 402 (`brain/src/pay/`): it compares the amount with the price on screen, offers `Pay $0.30 · site ⇥`, pays, and keeps a ledger. Nothing reports 402s to it, though. A detector would hold the request, send `payment_required` to the hub, and release it with `payment_done` (`protocol/types.ts`). The options, in the order to try them:
+- A browser extension that wraps `fetch` and XHR in each page, holds a 402 and passes it to the hub. It needs no certificates, knows which button was clicked, and works where the price is on screen. Browsers only, and a 402 on a whole page load means pay, then reload.
+- An opt-in client for scripts and agents (a `fetch` wrapper or an `HTTPS_PROXY` endpoint they choose to use).
+- A system-wide proxy with its own trusted root certificate. It covers every app, but it can read all HTTPS on the Mac, breaks apps that pin certificates, misses HTTP/3, and has no price on screen to check against outside a browser.
 
 ---
 
@@ -154,6 +162,8 @@ A frozen protocol (`protocol/types.ts`) let all three be built in parallel.
 13. **Nov 12.** All three end-to-end suites passed on the Mac: `npm run e2e` (recording, acting, habit, form-fill, completion and row-numbering ghosts, with live value patches and subtree re-walks), `npm run e2e:chores` (taught once, repeated twice, the remaining two, then recalled for the whole list), and `npm run e2e:canvas` (OCR clicks, a ghost on a drawn button, icons named by vision).
     - Faint canvas shapes: a second pass thresholds a gray thumbnail at 0.04 from the background's most common gray and takes contours of that, since Vision's contrast setting didn't separate a 0.9 box from white. A faint shape counts only with text inside it, where it grows that word's element to the button's size. `--vision-selftest` checks the canvas testbed's buttons span their boxes; `npm run e2e:canvas` still passes.
 
+14. **Nov 13.** Payments became a stretch goal (section 1). Tab stays out of them instead: nothing on card forms except the way to checkout, and never a click that spends money.
+
 ### How we worked
 
 - The plan was written first and kept as a progress log.
@@ -182,7 +192,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
                                             similar moments in other apps                             ~1 ms
   ActionObserver  your clicks, typing       local LLM (Qwen3-1.7B on llama.cpp), after a pause       ~0.4 s
   Actuator        click / type / key  ◀──   one calibrated score per suggestion; a ghost above 0.6
-  Overlay, HUD    the ghost                 payments (x402)
+  Overlay, HUD    the ghost                 nothing on card forms; never Pay or Place order
 ```
 
 - **Reading the screen** (`shell/Sources/TabShell/AXSensor.swift`, `VisionSensor.swift`): a snapshot of the front window takes 1–60 ms. A changed value patches its one element, and a change inside one container re-reads only that container. Each element has its role, label, value, section, and row and column in a table. Icon-only buttons are named once by a small local vision model. A window with little Accessibility is read with on-device OCR, and the icons and larger shapes in it (diagram boxes, images, game pieces) are found and named the same way, or by the text inside them.
@@ -191,7 +201,7 @@ TabShell (Swift, menu bar)                Hub (TypeScript, ws://127.0.0.1:7800)
   - A typed value also records where it came from (copied from a screen, the next in a sequence, typed before, a known fact from another field) and how it was rewritten (case, digits only, a date format), so a step can be replayed with new values.
   - Card numbers, SSNs and API keys are redacted before anything is saved. Password fields and password managers are never recorded.
   - Screens are kept for 30 days and steps for 90; form fills are kept until you delete them. While you're idle, finished tasks get one-line summaries you can search from the menu bar (Search Memory…).
-- **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. They include what you did after a similar step in other apps. The local model only runs once you pause, and stops as soon as you do something.
+- **Prediction** (`brain/src/predict/`, `brain/src/pattern.ts`): the fast predictions run on every change. They include what you did after a similar step in other apps. The local model only runs once you pause, and stops as soon as you do something. On a screen asking for card or bank details nothing is offered except a click toward checkout, and a button that spends money (Pay, Place order, Buy now) is never offered anywhere (`brain/src/payguard.ts`).
 - **Rules** (`brain/src/rules.ts`, HUD → Rules): rules you write in plain words. When the local model sees you've just done what a rule's trigger says, the rule's goal is offered as a ghost, and accepting it turns the next ghosts into steps toward that goal.
 - **Acting** (`Actuator.swift`): presses or clicks, types or pastes (your clipboard is put back afterwards), chooses from dropdowns, presses key combinations.
 

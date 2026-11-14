@@ -13,7 +13,7 @@ What it does:
 - **Completes what you're typing** with things you've typed before.
 - **Continues sequences.** Number three rows (10, 20, 30) and it offers 40, then "Fill the remaining 3".
 - **Repeats a chore for the next item.** Close one ticket from a list by hand, and it offers the same steps for the next one, then for all the rest.
-- **Pays when you say so.** For an HTTP 402 payment request (x402), the ghost becomes `Pay $0.30 · example.com ⇥`. Tab checks the amount against the price on screen first, and blocks a mismatch. Noticing these requests in any app is still being built (see [`PLAN.md`](PLAN.md)).
+- **Leaves payments to you.** On a screen that asks for card or bank details, Tab suggests nothing except the button that takes you to checkout. It never offers to press Pay, Place order or Buy now.
 
 How Tab works, how to develop it, how it was built and what's still to do: [`PLAN.md`](PLAN.md).
 

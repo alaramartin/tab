@@ -11,6 +11,7 @@ import { parseChallenge, pay, type Paid } from "./pay/x402.ts";
 import { contentSig, findEl, StateStore, stateKey } from "./state.ts";
 import { deriveProvenance } from "./memory/provenance.ts";
 import { toPast } from "./predict/decider.ts";
+import { allowedNearPayment, isPaymentScreen } from "./payguard.ts";
 import type { RuleBook, RuleChecker, RuleMatch } from "./rules.ts";
 
 const DEBOUNCE_MS = 40; // fast tiers take ~1 ms: predict as soon as a screen settles
@@ -336,6 +337,8 @@ export class Brain {
                 return;
             }
         }
+        // A screen asking for card details gets no model ghost and no rule (only a checkout click from the fast tiers).
+        if (isPaymentScreen(active)) return this.sendHud();
         // 3. The user finished something and paused: does one of their rules apply?
         if (this.ruleCheckDue && (await this.checkRules(active, gen))) return;
         if (gen !== this.gen) return;
@@ -401,6 +404,8 @@ export class Brain {
         if (gen !== this.gen || this.running) return false;
         if (a.confidence < (this.goal && a.source === "model" ? GOAL_SHOW_AT : SHOW_AT)) return false;
         if (actionKey(a) === this.dismissedKey) return false;
+        // Payments are the user's: never a click that spends money, and on a card form nothing but the way to checkout.
+        if (!allowedNearPayment(a, this.store.active(), (s) => this.resolve(s as Step))) return false;
         if (this.shown?.action && actionKey(this.shown.action) === actionKey(a)) return true; // already up
         const ghost = this.buildGhost(a);
         if (!ghost) return false;
